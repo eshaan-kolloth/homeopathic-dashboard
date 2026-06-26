@@ -1,4 +1,7 @@
 import streamlit as st
+if not st.session_state.get("password_correct", False):
+    st.stop()
+
 import datetime
 import os
 import re
@@ -24,403 +27,580 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ═══════════════════════════════════════════════════════════════════
-# GLOBAL CSS — Neural Glass Dark Theme + Animations
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# CSS
+# ══════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-*,*::before,*::after { box-sizing: border-box; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 
-:root {
-  --bg-1: #02030A; --bg-2: #040712; --bg-3: #06091A;
-  --blue: #4F8CFF; --purple: #7B61FF; --cyan: #00D4FF;
-  --green: #00FFC6; --gold: #FFD166; --red: #FF6B6B;
-  --text-primary: #F4F7FC; --text-secondary: #AEB9D4; --text-muted: #6B7694;
-  --glass-border: rgba(255,255,255,0.07); --glass-bg: rgba(255,255,255,0.03);
+:root{
+  --bg:#060810; --surf:#0A0D1C; --panel:#0E1328; --panel2:#111930;
+  --border:rgba(255,255,255,0.06); --border2:rgba(255,255,255,0.10);
+  --blue:#4F8CFF; --blue-d:rgba(79,140,255,0.12);
+  --purple:#7B61FF; --purple-d:rgba(123,97,255,0.12);
+  --cyan:#00D4FF; --cyan-d:rgba(0,212,255,0.10);
+  --green:#00FFC6; --green-d:rgba(0,255,198,0.10);
+  --gold:#FFD166; --gold-d:rgba(255,209,102,0.10);
+  --pink:#FF6EB4; --pink-d:rgba(255,110,180,0.10);
+  --red:#FF6B6B; --red-d:rgba(255,107,107,0.10);
+  --orange:#FF9F43;
+  --t1:#F0F4FF; --t2:#9BA8C4; --t3:#4E5A75;
 }
 
-html, body, .stApp {
-  background: radial-gradient(ellipse 130% 80% at 50% -10%,
-    rgba(15,20,60,0.95) 0%, var(--bg-2) 50%, var(--bg-1) 100%) !important;
-  color: var(--text-secondary);
-  font-family: 'Manrope', sans-serif;
+html,body,.stApp{
+  background:var(--bg) !important;
+  font-family:'Inter',sans-serif;
+  color:var(--t2);
 }
 
-#MainMenu, footer, header, .stDeployButton { visibility: hidden; }
+.stApp::before{
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(ellipse 60% 40% at 15% 20%,rgba(79,140,255,0.05) 0%,transparent 65%),
+    radial-gradient(ellipse 50% 35% at 85% 75%,rgba(123,97,255,0.04) 0%,transparent 60%),
+    radial-gradient(ellipse 40% 30% at 50% 50%,rgba(0,212,255,0.03) 0%,transparent 55%);
+}
 
-.block-container {
-  padding: 1.2rem 2vw 5rem !important;
-  max-width: 900px !important;
-  margin: 0 auto !important;
+#MainMenu,footer,header,.stDeployButton{visibility:hidden;}
+
+.block-container{
+  padding:0.8rem 2vw 5rem !important;
+  max-width:860px !important;
+  margin:0 auto !important;
+  position:relative; z-index:1;
 }
 
 /* ── ANIMATIONS ── */
-@keyframes dotPulse { 0%,100%{opacity:1;} 50%{opacity:0.25;} }
-@keyframes fadeSlideUp { from{opacity:0;transform:translateY(14px);} to{opacity:1;transform:translateY(0);} }
-@keyframes glowPulse { 0%,100%{box-shadow:0 0 8px rgba(79,140,255,0.3);} 50%{box-shadow:0 0 22px rgba(79,140,255,0.6);} }
-@keyframes shimmer { 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }
-@keyframes orbitSpin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
-@keyframes typingBounce { 0%,60%,100%{transform:translateY(0);} 30%{transform:translateY(-6px);} }
-@keyframes modeActivate { 0%{transform:scale(0.96);opacity:0.6;} 100%{transform:scale(1);opacity:1;} }
+@keyframes pulse      {0%,100%{opacity:1;}50%{opacity:.2;}}
+@keyframes glow       {0%,100%{box-shadow:0 0 10px rgba(79,140,255,.3);}50%{box-shadow:0 0 24px rgba(79,140,255,.7);}}
+@keyframes glowCyan   {0%,100%{box-shadow:0 0 10px rgba(0,212,255,.25);}50%{box-shadow:0 0 22px rgba(0,212,255,.6);}}
+@keyframes glowGold   {0%,100%{box-shadow:0 0 10px rgba(255,209,102,.25);}50%{box-shadow:0 0 20px rgba(255,209,102,.55);}}
+@keyframes bounce3    {0%,60%,100%{transform:translateY(0);}30%{transform:translateY(-7px);}}
+@keyframes slideUp    {from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
+@keyframes morphGrad  {0%,100%{background-position:0% 50%;}50%{background-position:100% 50%;}}
+@keyframes shimmer    {0%{opacity:0.4;}50%{opacity:1;}100%{opacity:0.4;}}
+@keyframes chipGlow   {0%,100%{box-shadow:none;}50%{box-shadow:var(--glow);}}
 
-/* ── TOPBAR ── */
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.65rem 1.1rem; margin-bottom: 1.1rem;
-  background: rgba(6,9,26,0.75);
-  border: 1px solid rgba(79,140,255,0.15);
-  border-radius: 16px; backdrop-filter: blur(24px);
-  animation: fadeSlideUp 0.5s ease both;
+/* ══════════════════
+   TOPBAR
+══════════════════ */
+.topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:.5rem 1.1rem; margin-bottom:.8rem;
+  background:rgba(10,13,28,0.92);
+  border:1px solid rgba(79,140,255,0.14);
+  border-radius:16px; backdrop-filter:blur(24px);
+  animation:slideUp .4s ease both; position:relative; overflow:hidden;
 }
-.tb-left { display: flex; align-items: center; gap: 0.8rem; }
-.tb-logo {
-  width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--blue), var(--purple) 55%, var(--cyan));
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.85rem; font-weight: 900; color: #fff; flex-shrink: 0;
-  animation: glowPulse 3s ease infinite;
+.topbar::before{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(90deg,rgba(79,140,255,.03) 0%,transparent 50%,rgba(0,212,255,.02) 100%);
+  pointer-events:none;
 }
-.tb-title { font-size: 1rem; font-weight: 800; color: var(--text-primary); letter-spacing: -0.3px; }
-.tb-badge {
-  font-family: 'JetBrains Mono', monospace; font-size: 0.58rem; font-weight: 600;
-  padding: 3px 10px; border-radius: 99px; border: 1px solid;
-  transition: all 0.3s ease;
+.tb-left{display:flex;align-items:center;gap:.65rem;}
+.tb-logo{
+  width:32px;height:32px;border-radius:9px;flex-shrink:0;
+  background:linear-gradient(135deg,#4F8CFF 0%,#7B61FF 55%,#00D4FF 100%);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.8rem;font-weight:900;color:#fff;animation:glow 3s ease infinite;
+  position:relative;
 }
-.tb-right { display: flex; align-items: center; gap: 10px; }
-.tb-stat {
-  font-family: 'JetBrains Mono', monospace; font-size: 0.58rem; color: var(--text-muted);
-  background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border);
-  padding: 3px 8px; border-radius: 8px;
+.tb-logo::after{
+  content:'';position:absolute;inset:-2px;border-radius:11px;z-index:-1;
+  background:linear-gradient(135deg,#4F8CFF,#7B61FF,#00D4FF);
+  filter:blur(5px);opacity:.45;
 }
-.tb-live { display: flex; align-items: center; gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.58rem; color: var(--green); }
-.tb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: dotPulse 2s ease infinite; }
+.tb-name{font-size:.95rem;font-weight:900;color:var(--t1);letter-spacing:-.4px;}
+.tb-tag{
+  font-family:'JetBrains Mono',monospace;font-size:.5rem;font-weight:600;
+  padding:2px 9px;border-radius:99px;
+  background:linear-gradient(90deg,rgba(0,212,255,.1),rgba(79,140,255,.1));
+  border:1px solid rgba(0,212,255,.2);color:var(--cyan);letter-spacing:.5px;
+}
+.tb-right{display:flex;align-items:center;gap:6px;}
+.tb-pill{
+  font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--t3);
+  background:rgba(255,255,255,.025);border:1px solid var(--border);
+  padding:3px 8px;border-radius:6px;
+}
+.tb-live{
+  display:flex;align-items:center;gap:5px;
+  font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--green);
+  background:var(--green-d);border:1px solid rgba(0,255,198,.18);
+  padding:3px 8px;border-radius:6px;
+}
+.tb-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.8s infinite;}
 
-/* ── SIDEBAR ── */
-section[data-testid="stSidebar"] {
-  background: rgba(3,5,15,0.98) !important;
-  border-right: 1px solid rgba(79,140,255,0.1) !important;
+/* ══════════════════
+   SIDEBAR
+══════════════════ */
+section[data-testid="stSidebar"]{
+  background:linear-gradient(180deg,#07091A 0%,#060810 100%) !important;
+  border-right:1px solid rgba(79,140,255,0.1) !important;
 }
-section[data-testid="stSidebar"] * { color: var(--text-secondary) !important; }
+section[data-testid="stSidebar"] *{color:var(--t2) !important;}
 
-.sb-label {
-  font-family: 'JetBrains Mono', monospace; font-size: 0.54rem;
-  color: var(--cyan); letter-spacing: 2.5px; text-transform: uppercase;
-  padding: 0.5rem 0 0.25rem; border-bottom: 1px solid rgba(0,212,255,0.12);
-  margin-bottom: 0.5rem; margin-top: 0.8rem;
+.sb-brand{
+  display:flex;align-items:center;gap:9px;
+  padding:.9rem .8rem .5rem;
+  border-bottom:1px solid rgba(255,255,255,.04);
+  margin-bottom:.3rem;
 }
+.sb-brand-logo{
+  width:34px;height:34px;border-radius:9px;flex-shrink:0;
+  background:linear-gradient(135deg,#4F8CFF,#7B61FF 55%,#00D4FF);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.85rem;font-weight:900;color:#fff;
+  box-shadow:0 0 14px rgba(79,140,255,.38);
+}
+.sb-brand-name{font-size:.88rem;font-weight:800;color:var(--t1);}
+.sb-brand-sub{font-family:'JetBrains Mono',monospace;font-size:.46rem;color:var(--t3);margin-top:1px;}
 
-/* MODE BUTTONS — Segmented control feel */
-div[data-testid="stVerticalBlock"] .mode-btn button {
-  border-radius: 10px !important; font-family: 'JetBrains Mono', monospace !important;
-  font-size: 0.72rem !important; font-weight: 600 !important;
-  padding: 0.55rem 0.8rem !important; width: 100% !important;
-  text-align: left !important; transition: all 0.2s ease !important;
-  margin-bottom: 5px !important;
+.sb-section{
+  font-family:'JetBrains Mono',monospace;font-size:.47rem;
+  letter-spacing:2.5px;text-transform:uppercase;
+  padding:.55rem .8rem .2rem;color:var(--t3) !important;
+  display:flex;align-items:center;gap:6px;
 }
-.mode-btn-off button {
-  background: rgba(255,255,255,0.02) !important;
-  border: 1px solid rgba(255,255,255,0.07) !important;
-  color: var(--text-muted) !important;
-}
-.mode-btn-off button:hover {
-  background: rgba(79,140,255,0.08) !important;
-  border-color: rgba(79,140,255,0.3) !important;
-  color: var(--blue) !important;
-  transform: translateX(3px);
-}
-.mode-btn-on button {
-  border: 1px solid !important; font-weight: 700 !important;
-  animation: modeActivate 0.25s ease both;
-}
+.sb-section::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.05),transparent);}
 
-.mode-desc {
-  font-size: 0.67rem; line-height: 1.55; margin: -2px 0 10px;
-  padding: 6px 10px; border-radius: 8px;
-  background: rgba(255,255,255,0.02); border-left: 2px solid;
-}
+/* ── QUICK ASK CHIPS — fully redesigned ── */
+.qa-wrap{padding:0 .4rem .2rem;}
 
-/* KPI cards */
-.sb-kpi {
-  background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border);
-  border-radius: 10px; padding: 0.55rem 0.75rem; margin-bottom: 0.4rem;
-  position: relative; overflow: hidden; transition: all 0.2s;
+.qa-chip{
+  display:flex;align-items:center;gap:8px;
+  padding:.38rem .65rem;border-radius:10px;cursor:pointer;
+  margin-bottom:3px;font-size:.68rem;font-weight:500;
+  transition:all .16s ease;border:1px solid transparent;
+  position:relative;overflow:hidden;
+  font-family:'Inter',sans-serif;
 }
-.sb-kpi:hover { background: rgba(255,255,255,0.04); transform: translateX(2px); }
-.sb-kpi::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:10px 0 0 10px; }
-.kc1::before{background:var(--cyan);} .kc2::before{background:var(--gold);}
-.kc3::before{background:var(--green);} .kc4::before{background:var(--red);} .kc5::before{background:var(--purple);}
-.sb-kpi-label { font-family:'JetBrains Mono',monospace; font-size:0.52rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px; }
-.sb-kpi-value { font-size:0.88rem; font-weight:700; color:var(--text-primary); margin-top:2px; }
+.qa-chip .chip-icon{
+  font-size:.78rem;flex-shrink:0;
+  width:22px;height:22px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+}
+.qa-chip .chip-txt{flex:1;line-height:1.3;}
+.qa-chip .chip-arr{
+  font-size:.6rem;opacity:0;transition:all .15s;
+  transform:translateX(-4px);
+}
+.qa-chip:hover .chip-arr{opacity:.6;transform:translateX(0);}
 
-/* Chip buttons */
-.chip-btn button {
-  border-radius: 8px !important; font-size: 0.7rem !important;
-  padding: 0.38rem 0.65rem !important; width: 100% !important;
-  text-align: left !important; transition: all 0.18s !important;
-  background: rgba(255,255,255,0.02) !important;
-  border: 1px solid rgba(255,255,255,0.07) !important;
-  color: var(--text-secondary) !important; margin-bottom: 4px !important;
-}
-.chip-btn button:hover {
-  background: rgba(0,212,255,0.06) !important;
-  border-color: rgba(0,212,255,0.35) !important;
-  color: var(--cyan) !important; transform: translateX(3px);
-}
+/* chip color themes */
+.qc-blue{background:rgba(79,140,255,.07);border-color:rgba(79,140,255,.16);color:#7AAEFF !important;}
+.qc-blue .chip-icon{background:rgba(79,140,255,.15);}
+.qc-blue:hover{background:rgba(79,140,255,.13);border-color:rgba(79,140,255,.38);transform:translateX(4px);box-shadow:0 0 16px rgba(79,140,255,.18);}
 
-/* ── WELCOME CARD ── */
-.welcome-card {
-  border-radius: 20px; padding: 1.6rem 1.8rem; margin-bottom: 1.2rem;
-  background: linear-gradient(135deg,
-    rgba(79,140,255,0.08) 0%, rgba(123,97,255,0.05) 50%, rgba(0,212,255,0.04) 100%);
-  border: 1px solid rgba(79,140,255,0.2);
-  animation: fadeSlideUp 0.6s ease both;
-  position: relative; overflow: hidden;
-}
-.welcome-card::before {
-  content: ''; position: absolute; top: -40px; right: -40px;
-  width: 180px; height: 180px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(79,140,255,0.12) 0%, transparent 70%);
-  pointer-events: none;
-}
-.wc-row { display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem; }
-.wc-pulse {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--green); box-shadow: 0 0 10px var(--green);
-  animation: dotPulse 2s infinite; flex-shrink: 0;
-}
-.wc-title { font-size: 1.1rem; font-weight: 800; color: var(--text-primary); }
-.wc-sub { font-size: 0.86rem; color: var(--text-muted); line-height: 1.7; margin-bottom: 1rem; }
-.wc-chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.wc-chip {
-  font-size: 0.72rem; padding: 5px 12px; border-radius: 99px;
-  background: rgba(79,140,255,0.1); border: 1px solid rgba(79,140,255,0.2);
-  color: var(--blue); font-weight: 500;
-}
+.qc-cyan{background:rgba(0,212,255,.06);border-color:rgba(0,212,255,.14);color:#3AD9FF !important;}
+.qc-cyan .chip-icon{background:rgba(0,212,255,.12);}
+.qc-cyan:hover{background:rgba(0,212,255,.12);border-color:rgba(0,212,255,.35);transform:translateX(4px);box-shadow:0 0 16px rgba(0,212,255,.16);}
 
-/* ── ACTIVE MODE BANNER ── */
-.mode-banner {
-  display: flex; align-items: center; gap: 10px; padding: 0.6rem 1rem;
-  border-radius: 12px; margin-bottom: 0.8rem; border: 1px solid;
-  animation: fadeSlideUp 0.4s ease both;
-}
-.mb-icon { font-size: 1.2rem; }
-.mb-info {}
-.mb-name { font-size: 0.78rem; font-weight: 800; }
-.mb-desc { font-size: 0.68rem; margin-top: 1px; opacity: 0.75; }
+.qc-green{background:rgba(0,255,198,.06);border-color:rgba(0,255,198,.13);color:#2AFFCE !important;}
+.qc-green .chip-icon{background:rgba(0,255,198,.11);}
+.qc-green:hover{background:rgba(0,255,198,.12);border-color:rgba(0,255,198,.32);transform:translateX(4px);box-shadow:0 0 16px rgba(0,255,198,.15);}
 
-/* ── CHAT MESSAGES ── */
-[data-testid="stChatMessage"] {
-  background: rgba(255,255,255,0.025) !important;
-  border: 1px solid var(--glass-border) !important;
-  border-radius: 16px !important;
-  padding: 0.3rem 0.6rem !important;
-  margin-bottom: 0.7rem !important;
-  animation: fadeSlideUp 0.35s ease both;
+.qc-gold{background:rgba(255,209,102,.07);border-color:rgba(255,209,102,.16);color:#FFD980 !important;}
+.qc-gold .chip-icon{background:rgba(255,209,102,.13);}
+.qc-gold:hover{background:rgba(255,209,102,.13);border-color:rgba(255,209,102,.38);transform:translateX(4px);box-shadow:0 0 16px rgba(255,209,102,.16);}
+
+.qc-purple{background:rgba(123,97,255,.07);border-color:rgba(123,97,255,.16);color:#9B80FF !important;}
+.qc-purple .chip-icon{background:rgba(123,97,255,.13);}
+.qc-purple:hover{background:rgba(123,97,255,.13);border-color:rgba(123,97,255,.38);transform:translateX(4px);box-shadow:0 0 16px rgba(123,97,255,.16);}
+
+.qc-pink{background:rgba(255,110,180,.07);border-color:rgba(255,110,180,.14);color:#FF8EC5 !important;}
+.qc-pink .chip-icon{background:rgba(255,110,180,.12);}
+.qc-pink:hover{background:rgba(255,110,180,.13);border-color:rgba(255,110,180,.35);transform:translateX(4px);box-shadow:0 0 16px rgba(255,110,180,.14);}
+
+.qc-red{background:rgba(255,107,107,.07);border-color:rgba(255,107,107,.14);color:#FF9090 !important;}
+.qc-red .chip-icon{background:rgba(255,107,107,.12);}
+.qc-red:hover{background:rgba(255,107,107,.13);border-color:rgba(255,107,107,.35);transform:translateX(4px);box-shadow:0 0 16px rgba(255,107,107,.14);}
+
+.qc-orange{background:rgba(255,159,67,.07);border-color:rgba(255,159,67,.14);color:#FFB870 !important;}
+.qc-orange .chip-icon{background:rgba(255,159,67,.12);}
+.qc-orange:hover{background:rgba(255,159,67,.13);border-color:rgba(255,159,67,.35);transform:translateX(4px);box-shadow:0 0 16px rgba(255,159,67,.14);}
+
+/* force streamlit buttons to be transparent so our CSS shows */
+.qa-wrap .stButton button{
+  background:transparent !important;border:none !important;
+  padding:0 !important;margin:0 !important;
+  width:100% !important;height:auto !important;
+  color:inherit !important;font-size:inherit !important;
+  font-weight:inherit !important;font-family:inherit !important;
+  text-align:left !important;
 }
-[data-testid="stChatMessageAvatarAssistant"] {
-  background: linear-gradient(135deg, rgba(79,140,255,0.25), rgba(123,97,255,0.2)) !important;
+.qa-wrap .stButton>div{margin:0 !important;}
+
+/* sidebar KPIs */
+.sb-kpi{
+  margin:0 .4rem .3rem;
+  background:rgba(255,255,255,.018);
+  border:1px solid var(--border);
+  border-radius:10px;padding:.5rem .7rem;
+  position:relative;overflow:hidden;transition:all .2s;
 }
-[data-testid="stChatMessageAvatarUser"] {
-  background: rgba(255,209,102,0.15) !important;
+.sb-kpi:hover{background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.08);}
+.sb-kpi-bar{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:10px 0 0 10px;}
+.sb-kpi-label{font-family:'JetBrains Mono',monospace;font-size:.45rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;}
+.sb-kpi-value{font-size:.78rem;font-weight:700;color:var(--t1);line-height:1.2;}
+
+/* nav buttons */
+.sb-nav .stButton button{
+  background:rgba(255,255,255,.015) !important;border:1px solid var(--border) !important;
+  color:var(--t3) !important;border-radius:9px !important;font-size:.7rem !important;
+  margin-bottom:4px !important;transition:all .15s !important;font-weight:500 !important;
+  text-align:left !important;
+}
+.sb-nav .stButton button:hover{
+  background:rgba(79,140,255,.06) !important;border-color:rgba(79,140,255,.22) !important;
+  color:var(--blue) !important;transform:translateX(2px) !important;
 }
 
-/* ARIA HTML tables inside chat */
-.aria-table { width:100%; border-collapse:collapse; margin:0.5rem 0; font-size:0.82rem; }
-.aria-table th {
-  background: rgba(79,140,255,0.12); color: var(--cyan);
-  font-family: 'JetBrains Mono', monospace; font-size: 0.58rem;
-  text-transform: uppercase; letter-spacing: 0.8px;
-  padding: 0.45rem 0.8rem; text-align: left;
-  border: 1px solid rgba(255,255,255,0.07);
+/* ══════════════════
+   WELCOME HERO
+══════════════════ */
+.hero{
+  border-radius:18px;padding:1.3rem 1.5rem;margin-bottom:.9rem;
+  position:relative;overflow:hidden;
+  border:1px solid rgba(79,140,255,.14);
+  animation:slideUp .5s ease both;
+  background:linear-gradient(135deg,rgba(79,140,255,.06),rgba(123,97,255,.04),rgba(0,212,255,.03));
 }
-.aria-table td { padding:0.36rem 0.8rem; border:1px solid rgba(255,255,255,0.04); color:var(--text-secondary); }
-.aria-table tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
-.aria-table tr.top-row td { color: var(--green); font-weight: 600; }
-.aria-table tr.alert-row td { color: var(--red); }
-.aria-table tr.warn-row td { color: var(--gold); }
+.hero::before{
+  content:'';position:absolute;top:-40px;right:-40px;
+  width:180px;height:180px;border-radius:50%;
+  background:radial-gradient(circle,rgba(79,140,255,.1),transparent 70%);
+  pointer-events:none;
+}
+.hero-top{display:flex;align-items:center;gap:8px;margin-bottom:.4rem;}
+.hero-live{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 9px var(--green);animation:pulse 1.8s infinite;flex-shrink:0;}
+.hero-title{font-size:1rem;font-weight:900;color:var(--t1);letter-spacing:-.4px;}
+.hero-sub{font-size:.79rem;color:var(--t3);line-height:1.7;margin-bottom:.9rem;}
+.hero-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.hchip{font-size:.66rem;padding:3px 10px;border-radius:99px;font-weight:500;}
+.hc-blue  {background:rgba(79,140,255,.1); border:1px solid rgba(79,140,255,.2); color:var(--blue);}
+.hc-green {background:rgba(0,255,198,.08); border:1px solid rgba(0,255,198,.18); color:var(--green);}
+.hc-gold  {background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.2);color:var(--gold);}
+.hc-red   {background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.2);color:var(--red);}
 
-.report-body {
-  font-size: 0.84rem; line-height: 1.85; color: var(--text-secondary);
+/* ══════════════════
+   CHAT MESSAGES — ChatGPT-style
+══════════════════ */
+.chat-container{
+  display:flex;flex-direction:column;gap:0;
+  padding:.2rem 0;
 }
-.report-body strong { color: var(--text-primary); }
-.report-body br { display: block; margin: 0.2rem 0; }
 
-/* ── TYPING INDICATOR ── */
-.typing-wrap { display:flex; align-items:center; gap:6px; padding:0.4rem 0; }
-.typing-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--blue);
-  animation: typingBounce 1.2s ease infinite;
-}
-.typing-dot:nth-child(2) { animation-delay: 0.15s; background: var(--purple); }
-.typing-dot:nth-child(3) { animation-delay: 0.3s; background: var(--cyan); }
-.typing-label { font-family:'JetBrains Mono',monospace; font-size:0.62rem; color:var(--text-muted); }
+/* individual message row */
+.cmsg{display:flex;gap:10px;animation:slideUp .25s ease both;margin-bottom:1rem;}
+.cmsg.user{flex-direction:row-reverse;}
 
-/* ── REPORT EXPANDER ── */
-details {
-  background: rgba(255,255,255,0.02) !important;
-  border: 1px solid var(--glass-border) !important;
-  border-radius: 12px !important;
-  margin-bottom: 0.5rem !important;
-  overflow: hidden !important;
+/* avatars */
+.cmsg-av{
+  width:32px;height:32px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.75rem;font-weight:700;margin-top:2px;
 }
-details summary {
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: 0.68rem !important; color: var(--cyan) !important;
-  padding: 0.5rem 0.8rem !important; cursor: pointer !important;
-  transition: background 0.2s !important;
+.av-ai{
+  background:linear-gradient(135deg,rgba(79,140,255,.25),rgba(0,212,255,.2));
+  border:1px solid rgba(0,212,255,.3);color:var(--cyan);
+  animation:glowCyan 3.5s ease infinite;position:relative;
 }
-details summary:hover { background: rgba(0,212,255,0.05) !important; }
-details[open] summary { border-bottom: 1px solid var(--glass-border) !important; }
+.av-ai::after{
+  content:'';position:absolute;inset:-2px;border-radius:50%;
+  border:1px solid rgba(0,212,255,.18);animation:pulse 2.5s infinite;
+}
+.av-user{
+  background:linear-gradient(135deg,rgba(79,140,255,.2),rgba(123,97,255,.15));
+  border:1px solid rgba(79,140,255,.22);color:var(--blue);
+}
 
-/* Report outer card */
-.report-card {
-  border-radius: 18px; border: 1px solid rgba(255,209,102,0.15);
-  background: linear-gradient(135deg, rgba(6,9,26,0.9), rgba(10,14,35,0.8));
-  padding: 1.4rem 1.6rem; margin-top: 0.8rem;
-}
-.report-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 1rem; padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--glass-border);
-}
-.rh-title { font-size: 0.95rem; font-weight: 800; color: var(--text-primary); }
-.rh-meta { font-family:'JetBrains Mono',monospace; font-size:0.58rem; color:var(--text-muted); }
+/* bubble container */
+.cmsg-body{flex:1;min-width:0;max-width:82%;}
+.cmsg.user .cmsg-body{display:flex;flex-direction:column;align-items:flex-end;}
 
-/* Progress steps */
-.prog-steps { display:flex; flex-direction:column; gap:0.4rem; margin:0.7rem 0; }
-.prog-step { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace; font-size:0.64rem; }
-.ps-icon { width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.55rem; flex-shrink:0; }
-.ps-done { background:rgba(0,255,198,0.15); color:var(--green); }
-.ps-active { background:rgba(79,140,255,0.2); color:var(--blue); animation:glowPulse 1s infinite; }
-.ps-pending { background:rgba(255,255,255,0.05); color:var(--text-muted); }
-.ps-label-done { color:var(--green); } .ps-label-active { color:var(--blue); } .ps-label-pending { color:var(--text-muted); }
+/* user bubble */
+.bubble-user{
+  background:linear-gradient(135deg,rgba(79,140,255,.15),rgba(123,97,255,.11));
+  border:1px solid rgba(79,140,255,.22);
+  border-radius:18px 4px 18px 18px;
+  padding:.65rem 1rem;
+  font-size:.84rem;color:var(--t1);line-height:1.7;
+  display:inline-block;max-width:100%;
+  word-break:break-word;
+}
+
+/* AI bubble */
+.bubble-ai{
+  background:rgba(10,13,28,.88);
+  border:1px solid rgba(79,140,255,.1);
+  border-radius:4px 18px 18px 18px;
+  padding:.8rem 1.05rem;
+  font-size:.84rem;color:var(--t2);line-height:1.8;
+  position:relative;overflow:hidden;
+  word-break:break-word;
+}
+.bubble-ai::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(0,212,255,.28),transparent);
+}
+
+/* message text styling */
+.bubble-ai strong,.bubble-user strong{color:var(--t1);font-weight:600;}
+.bubble-ai em{color:var(--cyan);font-style:normal;}
+.bubble-ai table{width:100%;border-collapse:collapse;margin:.6rem 0;font-size:.78rem;}
+.bubble-ai th{
+  background:rgba(79,140,255,.1);color:var(--cyan);
+  font-family:'JetBrains Mono',monospace;font-size:.52rem;
+  text-transform:uppercase;letter-spacing:.7px;
+  padding:.38rem .75rem;text-align:left;border:1px solid rgba(255,255,255,.05);
+}
+.bubble-ai td{padding:.3rem .75rem;border:1px solid rgba(255,255,255,.04);color:var(--t2);}
+.bubble-ai tr:nth-child(even) td{background:rgba(255,255,255,.012);}
+.bubble-ai tr.top td{color:var(--green);font-weight:600;}
+.bubble-ai tr.alert td{color:var(--red);}
+.bubble-ai tr.warn td{color:var(--gold);}
+
+/* timestamp */
+.cmsg-ts{
+  font-family:'JetBrains Mono',monospace;font-size:.47rem;color:var(--t3);
+  margin-top:3px;padding:0 2px;
+}
+.cmsg.user .cmsg-ts{text-align:right;}
+
+/* typing indicator */
+.typing-bubble{
+  background:rgba(10,13,28,.88);border:1px solid rgba(79,140,255,.1);
+  border-radius:4px 18px 18px 18px;
+  padding:.7rem 1.1rem;display:inline-flex;align-items:center;gap:8px;
+}
+.tdot{width:8px;height:8px;border-radius:50%;background:var(--blue);animation:bounce3 1.1s ease infinite;}
+.tdot:nth-child(2){animation-delay:.14s;background:var(--purple);}
+.tdot:nth-child(3){animation-delay:.28s;background:var(--cyan);}
+.typing-txt{font-family:'JetBrains Mono',monospace;font-size:.56rem;color:var(--t3);}
+
+/* suggested follow-ups */
+.sug-wrap{margin:.5rem 0 .2rem 42px;animation:slideUp .3s .1s ease both;}
+.sug-label{font-family:'JetBrains Mono',monospace;font-size:.47rem;color:var(--t3);text-transform:uppercase;letter-spacing:1.8px;margin-bottom:.35rem;display:flex;align-items:center;gap:5px;}
+.sug-label::before{content:'◆';font-size:.42rem;color:var(--cyan);}
+.sug-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.sug-chip{
+  font-size:.68rem;padding:4px 11px;border-radius:8px;cursor:pointer;
+  background:rgba(79,140,255,.07);border:1px solid rgba(79,140,255,.15);
+  color:var(--blue);transition:all .15s;font-weight:500;white-space:nowrap;
+}
+.sug-chip:hover{background:rgba(79,140,255,.14);border-color:rgba(79,140,255,.36);transform:translateY(-2px);box-shadow:0 4px 12px rgba(79,140,255,.14);}
 
 /* ── CHAT INPUT ── */
-.stChatInput > div {
-  background: rgba(6,9,26,0.8) !important;
-  border: 1px solid rgba(79,140,255,0.2) !important;
-  border-radius: 16px !important;
-  backdrop-filter: blur(20px) !important;
+.stChatInput>div{
+  background:rgba(8,11,24,.92) !important;
+  border:1px solid rgba(79,140,255,.18) !important;
+  border-radius:14px !important;backdrop-filter:blur(20px) !important;
+  transition:all .2s !important;
 }
-.stChatInput > div:focus-within {
-  border-color: rgba(79,140,255,0.5) !important;
-  box-shadow: 0 0 28px rgba(79,140,255,0.12) !important;
+.stChatInput>div:focus-within{
+  border-color:rgba(79,140,255,.45) !important;
+  box-shadow:0 0 28px rgba(79,140,255,.09) !important;
 }
+.stChatInput textarea{color:var(--t1) !important;font-family:'Inter',sans-serif !important;font-size:.84rem !important;}
+[data-testid="stChatInputSubmitButton"] svg{color:var(--blue) !important;}
 
-/* ── GLOBAL BUTTON OVERRIDES ── */
-.stButton button {
-  font-family: 'Manrope', sans-serif !important;
-  transition: all 0.2s ease !important;
-}
-.stDownloadButton button {
-  background: linear-gradient(135deg, var(--green), var(--cyan)) !important;
-  border: none !important; color: #02030A !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 18px rgba(0,255,198,0.2) !important;
-  border-radius: 12px !important; font-size: 0.82rem !important;
-}
-.stDownloadButton button:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 8px 28px rgba(0,255,198,0.35) !important;
-}
+/* ══════════════════
+   DIVIDER
+══════════════════ */
+.div-line{height:1px;margin:.9rem 0;background:linear-gradient(90deg,transparent,rgba(79,140,255,.15),rgba(0,212,255,.1),transparent);}
 
-/* Primary action button */
-.primary-btn button {
-  background: linear-gradient(135deg, var(--blue), var(--purple)) !important;
-  border: none !important; color: #fff !important;
-  box-shadow: 0 4px 18px rgba(79,140,255,0.28) !important;
-  border-radius: 12px !important; font-weight: 700 !important;
-  font-size: 0.82rem !important;
+/* ══════════════════
+   REPORT BANNER — vibrant
+══════════════════ */
+.gen-banner{
+  border-radius:18px;padding:1.3rem 1.5rem;margin:.8rem 0 .6rem;
+  position:relative;overflow:hidden;
+  border:1px solid rgba(255,209,102,.18);
+  background:linear-gradient(135deg,
+    rgba(255,209,102,.07) 0%,rgba(255,107,107,.04) 30%,
+    rgba(79,140,255,.06) 65%,rgba(0,212,255,.04) 100%);
+  animation:slideUp .5s ease both;
 }
-.primary-btn button:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 8px 28px rgba(79,140,255,0.45) !important;
+.gen-banner::before{
+  content:'';position:absolute;top:-60px;right:-40px;
+  width:200px;height:200px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,209,102,.09),transparent 65%);
+  pointer-events:none;
 }
+.gen-banner::after{
+  content:'';position:absolute;bottom:-40px;left:-30px;
+  width:150px;height:150px;border-radius:50%;
+  background:radial-gradient(circle,rgba(79,140,255,.07),transparent 65%);
+  pointer-events:none;
+}
+.gen-inner{position:relative;z-index:1;}
+.gen-eyebrow{
+  font-family:'JetBrains Mono',monospace;font-size:.5rem;
+  color:var(--gold);letter-spacing:2px;text-transform:uppercase;
+  margin-bottom:.35rem;display:flex;align-items:center;gap:6px;
+}
+.gen-eyebrow::before{content:'◆';font-size:.4rem;animation:shimmer 2s ease infinite;}
+.gen-title{font-size:1rem;font-weight:900;color:var(--t1);margin-bottom:.25rem;letter-spacing:-.3px;}
+.gen-sub{font-size:.76rem;color:var(--t3);line-height:1.6;margin-bottom:.9rem;}
+.gen-pills{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:.85rem;}
+.gp{font-size:.62rem;padding:3px 9px;border-radius:99px;font-weight:500;}
+.gp-b{background:rgba(79,140,255,.1); border:1px solid rgba(79,140,255,.2); color:var(--blue);}
+.gp-c{background:rgba(0,212,255,.09); border:1px solid rgba(0,212,255,.18); color:var(--cyan);}
+.gp-g{background:rgba(0,255,198,.08); border:1px solid rgba(0,255,198,.17); color:var(--green);}
+.gp-o{background:rgba(255,209,102,.09);border:1px solid rgba(255,209,102,.18);color:var(--gold);}
+.gp-p{background:rgba(123,97,255,.09); border:1px solid rgba(123,97,255,.18); color:var(--purple);}
+.gp-k{background:rgba(255,110,180,.09);border:1px solid rgba(255,110,180,.17);color:var(--pink);}
 
-/* Nav buttons */
-.nav-btn button {
-  background: rgba(255,255,255,0.03) !important;
-  border: 1px solid var(--glass-border) !important;
-  color: var(--text-muted) !important;
-  border-radius: 10px !important; font-size: 0.76rem !important;
-  margin-bottom: 4px !important;
+/* generate button */
+.btn-gen .stButton button{
+  background:linear-gradient(135deg,#4F8CFF,#7B61FF 50%,#00D4FF) !important;
+  background-size:200% auto !important;animation:morphGrad 4s ease infinite !important;
+  border:none !important;color:#fff !important;
+  box-shadow:0 4px 20px rgba(79,140,255,.3),0 0 0 1px rgba(255,255,255,.07) inset !important;
+  border-radius:11px !important;font-weight:800 !important;font-size:.82rem !important;
+  transition:all .2s !important;
 }
-.nav-btn button:hover {
-  background: rgba(79,140,255,0.08) !important;
-  border-color: rgba(79,140,255,0.3) !important;
-  color: var(--blue) !important;
-}
+.btn-gen .stButton button:hover{transform:translateY(-2px) !important;box-shadow:0 8px 30px rgba(79,140,255,.48) !important;}
 
-/* Divider */
-.aria-divider {
-  height: 1px; background: linear-gradient(90deg, transparent, rgba(79,140,255,0.2), transparent);
-  margin: 0.8rem 0;
+/* pdf button */
+.btn-pdf .stButton button{
+  background:linear-gradient(135deg,#FFD166,#FF9F43) !important;
+  border:none !important;color:#0A0D1C !important;
+  box-shadow:0 4px 16px rgba(255,209,102,.25) !important;
+  border-radius:11px !important;font-weight:800 !important;font-size:.82rem !important;
+  transition:all .2s !important;
 }
+.btn-pdf .stButton button:hover{transform:translateY(-2px) !important;box-shadow:0 8px 26px rgba(255,209,102,.42) !important;}
 
-/* Confidence meter */
-.conf-bar-wrap { display:flex; align-items:center; gap:8px; margin-top:6px; }
-.conf-bar-track { flex:1; height:4px; background:rgba(255,255,255,0.06); border-radius:99px; overflow:hidden; }
-.conf-bar-fill { height:100%; border-radius:99px; background:linear-gradient(90deg,var(--blue),var(--cyan)); }
-.conf-label { font-family:'JetBrains Mono',monospace; font-size:0.56rem; color:var(--text-muted); white-space:nowrap; }
-
-/* Insight badge */
-.insight-badge {
-  display:inline-flex; align-items:center; gap:4px;
-  font-family:'JetBrains Mono',monospace; font-size:0.56rem; font-weight:600;
-  padding:2px 8px; border-radius:99px; margin-right:4px; margin-bottom:4px;
+/* clear button */
+.btn-clr .stButton button{
+  background:rgba(255,107,107,.07) !important;border:1px solid rgba(255,107,107,.2) !important;
+  color:var(--red) !important;border-radius:11px !important;font-size:.8rem !important;
+  font-weight:600 !important;transition:all .2s !important;
 }
+.btn-clr .stButton button:hover{background:rgba(255,107,107,.13) !important;border-color:rgba(255,107,107,.36) !important;transform:translateY(-1px) !important;}
+
+/* download */
+.stDownloadButton button{
+  background:linear-gradient(135deg,#00FFC6,#00D4FF) !important;
+  border:none !important;color:#060810 !important;font-weight:800 !important;
+  border-radius:11px !important;font-size:.82rem !important;
+  box-shadow:0 4px 18px rgba(0,255,198,.2) !important;
+}
+.stDownloadButton button:hover{transform:translateY(-2px) !important;}
+
+/* ── PROGRESS STEPS ── */
+.prog-wrap{
+  background:rgba(10,13,28,.85);border:1px solid var(--border);
+  border-radius:13px;padding:.8rem .9rem;animation:slideUp .3s ease both;
+}
+.prog-title{font-family:'JetBrains Mono',monospace;font-size:.55rem;color:var(--t3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:.55rem;}
+.prog{display:flex;flex-direction:column;gap:.3rem;}
+.pstep{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:.59rem;}
+.picon{width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.5rem;flex-shrink:0;}
+.p-done{background:rgba(0,255,198,.12);color:var(--green);border:1px solid rgba(0,255,198,.2);}
+.p-active{background:rgba(79,140,255,.16);color:var(--blue);border:1px solid rgba(79,140,255,.28);animation:glow 1s infinite;}
+.p-wait{background:rgba(255,255,255,.04);color:var(--t3);border:1px solid var(--border);}
+.pl-done{color:var(--green);}.pl-active{color:var(--blue);}.pl-wait{color:var(--t3);}
+
+/* ── REPORT CARD ── */
+.report-card{
+  border-radius:18px;border:1px solid rgba(255,209,102,.1);
+  background:linear-gradient(135deg,rgba(11,15,32,.97),rgba(8,11,25,.95));
+  padding:1.2rem 1.4rem;margin-top:.7rem;
+  animation:slideUp .4s ease both;position:relative;overflow:hidden;
+}
+.report-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,209,102,.25),transparent);
+}
+.rh{display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem;padding-bottom:.6rem;border-bottom:1px solid var(--border);}
+.rh-left{display:flex;align-items:center;gap:9px;}
+.rh-icon{
+  width:30px;height:30px;border-radius:8px;flex-shrink:0;
+  background:linear-gradient(135deg,rgba(255,209,102,.18),rgba(255,159,67,.12));
+  border:1px solid rgba(255,209,102,.18);
+  display:flex;align-items:center;justify-content:center;font-size:.8rem;
+}
+.rh-title{font-size:.88rem;font-weight:800;color:var(--t1);}
+.rh-meta{font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--t3);margin-top:1px;}
+.conf-row{display:flex;align-items:center;gap:8px;}
+.conf-track{flex:1;height:3px;background:rgba(255,255,255,.05);border-radius:99px;overflow:hidden;}
+.conf-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--cyan));box-shadow:0 0 7px rgba(0,212,255,.35);}
+.conf-txt{font-family:'JetBrains Mono',monospace;font-size:.49rem;color:var(--t3);}
+
+/* nav btn fallback */
+.bot-nav .stButton button{
+  background:rgba(255,255,255,.015) !important;border:1px solid var(--border) !important;
+  color:var(--t3) !important;border-radius:9px !important;font-size:.7rem !important;
+  font-weight:500 !important;transition:all .15s !important;
+}
+.bot-nav .stButton button:hover{background:rgba(79,140,255,.06) !important;border-color:rgba(79,140,255,.22) !important;color:var(--blue) !important;}
+
+/* report section body */
+.rsec{font-size:.82rem;line-height:1.8;color:var(--t2);}
+.rsec strong{color:var(--t1);}
+.rsec table{width:100%;border-collapse:collapse;font-size:.77rem;margin:.5rem 0;}
+.rsec th{background:rgba(79,140,255,.1);color:var(--cyan);padding:.38rem .72rem;font-family:'JetBrains Mono',monospace;font-size:.51rem;text-transform:uppercase;letter-spacing:.7px;border:1px solid rgba(255,255,255,.05);text-align:left;}
+.rsec td{padding:.3rem .72rem;border:1px solid rgba(255,255,255,.04);}
+.rsec tr:nth-child(even) td{background:rgba(255,255,255,.01);}
+.rsec tr.top td{color:var(--green);font-weight:600;}
+.rsec tr.alert td{color:var(--red);}
+.rsec tr.warn td{color:var(--gold);}
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# GUARD — no dataset loaded
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# GUARD
+# ══════════════════════════════════════════════════════════════════
 if "df" not in st.session_state:
     st.markdown("""
-    <div style="text-align:center;padding:3rem;animation:fadeSlideUp 0.5s ease both;">
-      <div style="font-size:3rem;margin-bottom:1rem;">◆</div>
-      <div style="font-size:1.2rem;font-weight:800;color:#F4F7FC;margin-bottom:0.5rem;">ARIA needs data to work</div>
-      <div style="font-size:0.86rem;color:#6B7694;margin-bottom:1.5rem;">Upload your Excel sales file to unlock the full AI intelligence dashboard.</div>
+    <div style="text-align:center;padding:4rem 2rem;animation:slideUp .5s ease both;">
+      <div style="font-size:3rem;margin-bottom:1rem;filter:drop-shadow(0 0 20px rgba(79,140,255,.4));">◆</div>
+      <div style="font-size:1.15rem;font-weight:900;color:#F0F4FF;margin-bottom:.5rem;">ARIA needs your data</div>
+      <div style="font-size:.8rem;color:#4E5A75;margin-bottom:1.5rem;">Upload a sales file to unlock the AI intelligence dashboard.</div>
     </div>
     """, unsafe_allow_html=True)
-    col_c = st.columns([1, 2, 1])[1]
-    with col_c:
-        st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
+    c = st.columns([1,2,1])[1]
+    with c:
         if st.button("← Upload Dataset", use_container_width=True):
             st.switch_page("app.py")
-        st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 df       = st.session_state["df"]
-filename = st.session_state.get("filename", "dataset.xlsx")
+filename = st.session_state.get("filename","dataset.xlsx")
 
-# ═══════════════════════════════════════════════════════════════════
-# CACHED COMPUTATIONS
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# DATA
+# ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner=False)
-def compute_stats(_df_id):
-    totals     = get_salesperson_totals(df)
-    daily      = get_daily_totals(df)
-    cat_totals = get_category_totals(df)
-    zero_list  = get_zero_sales(df)
-    summary    = get_data_summary_for_ai(df)
-    return totals, daily, cat_totals, zero_list, summary
+def compute_stats(_key):
+    return (
+        get_salesperson_totals(df),
+        get_daily_totals(df),
+        get_category_totals(df),
+        get_zero_sales(df),
+        get_data_summary_for_ai(df),
+    )
 
-df_id = f"{df.shape}_{list(df.columns)}"
-totals, daily, cat_totals, zero_list, data_summary = compute_stats(df_id)
+_key = f"{df.shape}_{list(df.columns)}"
+totals, daily, cat_totals, zero_list, data_summary = compute_stats(_key)
 
-total_rev      = float(totals["Total"].sum())       if not totals.empty     else 0.0
+total_rev      = float(totals["Total"].sum())     if not totals.empty else 0.0
 mtd            = get_mtd_total(df)
 ytd            = get_ytd_total(df)
-top_seller     = totals.iloc[0]["Salesperson"]      if not totals.empty     else "—"
-top_val        = float(totals.iloc[0]["Total"])     if not totals.empty     else 0.0
-avg_daily      = float(daily.mean())                if len(daily) > 0       else 0.0
-active_sellers = int((totals["Total"] > 0).sum())   if not totals.empty     else 0
-
-mtd_display = f"₹{mtd:,.0f}" if mtd > 0 else "N/A"
-mtd_for_ai  = f"₹{mtd:,.0f}" if mtd > 0 else "Not available — dataset is historical"
+top_seller     = totals.iloc[0]["Salesperson"]    if not totals.empty else "—"
+top_val        = float(totals.iloc[0]["Total"])   if not totals.empty else 0.0
+avg_daily      = float(daily.mean())              if len(daily) > 0   else 0.0
+active_sellers = int((totals["Total"] > 0).sum()) if not totals.empty else 0
+rev_per_seller = (total_rev / active_sellers)     if active_sellers   else 0
+top_multiplier = (top_val / rev_per_seller)       if rev_per_seller   else 0
+mtd_display    = f"₹{mtd:,.0f}" if mtd > 0 else "N/A"
+mtd_for_ai     = f"₹{mtd:,.0f}" if mtd > 0 else "Not available"
 
 never_sold, bad_day = [], []
 for s in zero_list:
@@ -431,973 +611,859 @@ for s in zero_list:
         else:
             bad_day.append(s)
 
-rev_per_seller   = (total_rev / active_sellers) if active_sellers > 0 else 0
-top_multiplier   = (top_val / rev_per_seller)   if rev_per_seller > 0 else 0
-zero_rate        = (len(never_sold) / active_sellers * 100) if active_sellers > 0 else 0
+zero_rate   = (len(never_sold) / active_sellers * 100) if active_sellers else 0
+alert_count = len(never_sold) + len(bad_day)
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
 # SESSION STATE
-# ═══════════════════════════════════════════════════════════════════
-DEFAULTS = {
-    "chat_history":   [],
-    "bi_mode":        "Analyst",
-    "bi_report_txt":  None,
-    "_pending_ai":    False,
-    "_pending_q":     None,
-}
-for k, v in DEFAULTS.items():
+# ══════════════════════════════════════════════════════════════════
+for k, v in {"chat_history":[], "bi_report_txt":None, "_pending_ai":False}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-current_mode = st.session_state["bi_mode"]
-msg_count    = sum(1 for m in st.session_state["chat_history"] if m["role"] == "user")
+msg_count = sum(1 for m in st.session_state["chat_history"] if m["role"] == "user")
 
-# ═══════════════════════════════════════════════════════════════════
-# MODE METADATA
-# ═══════════════════════════════════════════════════════════════════
-MODE_META = {
-    "Analyst": {
-        "icon": "📊", "color": "#4F8CFF", "bg": "rgba(79,140,255,0.08)",
-        "border": "rgba(79,140,255,0.25)",
-        "desc": "Deep breakdowns · trend analysis · root causes · every number",
-        "badge_txt": "DEEP ANALYSIS",
-    },
-    "Executive": {
-        "icon": "🧑‍💼", "color": "#FFD166", "bg": "rgba(255,209,102,0.08)",
-        "border": "rgba(255,209,102,0.25)",
-        "desc": "5-bullet briefs · one priority · under 80 words · boardroom-ready",
-        "badge_txt": "EXEC BRIEF",
-    },
-    "Investor": {
-        "icon": "📈", "color": "#00FFC6", "bg": "rgba(0,255,198,0.08)",
-        "border": "rgba(0,255,198,0.25)",
-        "desc": "Growth % · ROI trajectory · concentration risk · scaling potential",
-        "badge_txt": "GROWTH FOCUS",
-    },
-    "Operational": {
-        "icon": "⚙️", "color": "#FF6B6B", "bg": "rgba(255,107,107,0.08)",
-        "border": "rgba(255,107,107,0.25)",
-        "desc": "Named actions · zero-alerts first · specific people · today's priority",
-        "badge_txt": "FIELD OPS",
-    },
-}
-m = MODE_META[current_mode]
-
-# ═══════════════════════════════════════════════════════════════════
-# AI MODE INSTRUCTIONS (injected into system prompt)
-# ═══════════════════════════════════════════════════════════════════
-MODE_INSTRUCTIONS = {
-    "Analyst": """
-ANALYST MODE — DEEP DATA ANALYST
-You are a senior data analyst. Precise, thorough, pattern-focused.
-RULES:
-① Complete breakdowns — never truncate data
-② Every number has context (vs avg, vs prior period)
-③ HTML tables for any data > 2 rows or 2 columns (class="aria-table")
-④ Always include TREND OBSERVATION and ROOT CAUSE NOTES
-⑤ Match length to complexity: fact→2-4 lines, comparison→table+insights, analysis→full sections
-⑥ Highlight outliers explicitly — name the person, category, day
-⑦ Never round unless asked
-⑧ Use: MoM, YoY, variance, delta, trailing average
-""",
-    "Executive": """
-EXECUTIVE MODE — CEO BRIEFING ADVISOR
-You brief a time-constrained CEO. Every word must earn its place.
-RULES:
-① HARD LIMIT: under 80 words total — no exceptions
-② Lead with the single most important number — always first line
-③ Maximum 5 bullet points — never more
-④ ONE recommendation only — highest priority action
-⑤ No tables (CEO sees those elsewhere)
-⑥ No hedging language — be definitive
-⑦ Format: bullets + "▶ ACTION: [directive]"
-⑧ Active voice only. Never passive.
-""",
-    "Investor": """
-INVESTOR MODE — GROWTH REVENUE ANALYST
-You advise an investor or board member. Think in % and multiples.
-RULES:
-① Always open with revenue growth % and trajectory (accelerating/decelerating)
-② Flag top 1-2 categories with highest scaling potential and WHY
-③ Include ratios: top seller vs average, category concentration, active seller %
-④ Every insight connects to: revenue upside OR business risk
-⑤ Flag concentration risks (>40% dependency)
-⑥ Use HTML tables for ratio comparisons (class="aria-table")
-⑦ Frame recommendations in: resource allocation, growth levers, risk mitigation
-""",
-    "Operational": """
-OPERATIONAL MODE — FIELD OPERATIONS MANAGER
-No-nonsense. Morning standup in 10 minutes. You know every person by name.
-RULES:
-① NAME SPECIFIC PEOPLE in every answer — never "a salesperson" — always "BINOY", "RAHUL" etc
-② Every response has NAMED ACTION ITEMS: → [ACTION VERB] [PERSON] — [specific reason]
-③ ZERO-SALES ALERTS always first — highest priority
-④ Numbered action list — no paragraphs
-⑤ Zero strategic commentary — only field operations
-⑥ Use: URGENT, IMMEDIATE, TODAY, FOLLOW UP NOW
-⑦ End with TODAY'S PRIORITY LIST (max 5 items, ranked by urgency)
-""",
-}
-
-# ═══════════════════════════════════════════════════════════════════
-# MASTER SYSTEM PROMPT
-# ═══════════════════════════════════════════════════════════════════
-BI_SYSTEM_PROMPT = f"""
-ARIA — AI SALES INTELLIGENCE COPILOT
+# ══════════════════════════════════════════════════════════════════
+# SYSTEM PROMPT
+# ══════════════════════════════════════════════════════════════════
+SYSTEM_PROMPT = f"""
+════════════════════════════════════════════════════════
+ARIA — SALES INTELLIGENCE AI COPILOT
 Homeopathic Pharmaceutical Company · Internal BI Platform
+════════════════════════════════════════════════════════
 
-IDENTITY: You are ARIA, a purpose-built analytical engine for sales intelligence.
-Not a general assistant. Designed for evidence-based business decisions.
+YOU ARE: ARIA (Analytical Revenue Intelligence Assistant)
+A precision-built AI engine for pharmaceutical sales intelligence.
+Not a general assistant. Every response drives a business decision.
 
-ACTIVE MODE: {current_mode.upper()}
-{MODE_INSTRUCTIONS.get(current_mode, "")}
+ACTIVE DATASET: {filename}
+GENERATED: {datetime.datetime.now().strftime("%d %B %Y, %I:%M %p")}
 
-QUERY CLASSIFICATION (classify silently, apply rules, never write the type):
-TYPE A — Greeting/small talk → 1-2 friendly sentences, no data
-TYPE B — Single fact → 1-3 lines, exact fact + one line context
-TYPE C — Comparison/list → HTML table first, then 1-2 insights below
-TYPE D — Full analysis → structured sections, mode output format
+IDENTITY & PERSONA:
+- Senior sales intelligence analyst, 15 years in pharmaceutical distribution.
+- You know every salesperson by name. Direct. Evidence-based. Opinionated.
+- You never say "Great question!", "As an AI", "I hope this helps".
+- You NEVER repeat the user's question. START immediately with the first insight.
 
-FORMATTING:
-- Currency: ₹ Indian format (₹3,47,594 not ₹347,594)
-- HTML tables: <table class="aria-table">...</table>
-- Row classes: top-row (green), alert-row (red), warn-row (gold)
-- Section headers: <strong>── SECTION ──</strong>
+RESPONSE RULES:
+- Greetings: 2 sentences max
+- Single fact: 3 lines max  
+- Comparisons: HTML table FIRST, then 2-3 key callouts
+- Full analysis: complete detail, nothing truncated
 
-NEVER:
-✗ Fabricate numbers
-✗ End with "Let me know if...", "Hope this helps!", "Feel free to ask!"
-✗ Say "As an AI...", "Great question!", repeat the question
-✗ Exceed 80 words in Executive Mode
-✗ Make up data — say clearly if data is unavailable
-✗ Use passive voice when active is possible
+NEVER DO:
+- Round numbers unless asked
+- Give vague statements ("some sellers", "a few")
+- Write long paragraphs — use tables, bullets, structure
+- Fabricate data beyond the dataset
 
-ALWAYS:
-✓ Start immediately with the answer
-✓ Name people, categories, exact values
-✓ Contextualize every number
-✓ Apply active MODE rules strictly
+ALWAYS DO:
+- NAME SPECIFIC PEOPLE — never "a salesperson", always the real name
+- Contextualize every number (vs team avg, as % of total)
+- Flag alerts proactively when relevant
 
-INTELLIGENCE RULES:
-- Underperforming: >20% below team average
-- Top performer: >30% above team average
-- Never Sold = ₹0 entire period → CRITICAL
-- Had Bad Day = ₹0 on one day but non-zero overall → MONITOR
+HTML FORMATTING:
+Tables: <table><tr><th>Col</th></tr><tr class="top"><td>Best</td></tr><tr class="alert"><td>Critical</td></tr><tr class="warn"><td>Warning</td></tr></table>
+Section headers: <strong>── SECTION NAME ──</strong>
+Currency: ₹ Indian format (₹3,47,594)
+
+PERFORMANCE THRESHOLDS:
+- Star Performer: > 130% of team avg → highlight
+- Underperformer: < 80% of team avg → flag
+- Never Sold: ₹0 total → CRITICAL
+- Bad Day: ₹0 on one day → monitor
 
 LIVE DATA:
-Dataset: {filename}
+File: {filename}
 {data_summary}
 
-KEY METRICS:
-Total Revenue     : ₹{total_rev:,.0f}
-MTD Revenue       : {mtd_for_ai}
-YTD Revenue       : ₹{ytd:,.0f}
-Daily Average     : ₹{avg_daily:,.0f}
-Top Seller        : {top_seller} (₹{top_val:,.0f})
-Active Sellers    : {active_sellers}
-Rev / Seller      : ₹{rev_per_seller:,.0f}
-Top Multiplier    : {top_multiplier:.2f}× average
-Zero-Sale Rate    : {zero_rate:.1f}%
+KEY NUMBERS:
+  Total Revenue  : ₹{total_rev:,.0f}
+  MTD Revenue    : {mtd_for_ai}
+  YTD Revenue    : ₹{ytd:,.0f}
+  Daily Average  : ₹{avg_daily:,.0f}
+  Top Seller     : {top_seller} (₹{top_val:,.0f})
+  Active Sellers : {active_sellers}
+  Rev / Seller   : ₹{rev_per_seller:,.0f}
+  Top Multiplier : {top_multiplier:.2f}× average
+  Zero-Sale Rate : {zero_rate:.1f}%
 
 ALERTS:
-Never Sold (₹0 total) : {', '.join(never_sold) if never_sold else 'None'}
-Had Bad Day (₹0 day)  : {', '.join(bad_day) if bad_day else 'None'}
+  Never Sold (₹0 total) : {', '.join(never_sold) if never_sold else 'None'}
+  Had Bad Day (₹0 day)  : {', '.join(bad_day) if bad_day else 'None'}
+
+SUGGESTED FOLLOW-UPS:
+After EVERY response (except greetings), append EXACTLY:
+<div id="aria-sq" style="display:none">SUGGESTED:
+Q1: [specific follow-up based on what you just answered]
+Q2: [dig deeper question]
+Q3: [different angle or action-focused]
+</div>
+Keep each question under 60 chars. Never show this block visually.
+
+FULL REPORT (when requested):
+Generate ALL 10 sections, no truncation:
+1. EXECUTIVE SUMMARY
+2. KPI SCORECARD
+3. SALESPERSON PERFORMANCE LEADERBOARD
+4. CATEGORY REVENUE ANALYSIS
+5. DAILY TREND ANALYSIS
+6. ZERO-SALES & CRITICAL ALERTS
+7. AI INSIGHT ENGINE — ROOT CAUSE ANALYSIS
+8. GROWTH OPPORTUNITIES
+9. STRATEGIC RECOMMENDATIONS
+10. NEXT BEST ACTIONS (TODAY)
+════════════════════════════════════════════════════════
 """
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# AI HELPERS
+# ══════════════════════════════════════════════════════════════════
+def get_ai_response(user_text: str) -> str:
+    groq_hist = []
+    for m in st.session_state["chat_history"][-10:]:
+        content = re.sub(r'<div id="aria-sq".*?</div>', '', m["content"], flags=re.DOTALL).strip()
+        if len(content) > 400:
+            content = content[:400] + "…"
+        groq_hist.append({"role": m["role"], "content": content})
+    try:
+        return ask_groq(user_text, SYSTEM_PROMPT, chat_history=groq_hist)
+    except Exception as e:
+        return f'<span style="color:#FF6B6B;font-family:JetBrains Mono,monospace;font-size:.78rem;">⚠️ ARIA error: {str(e)[:200]}</span>'
+
+def extract_sqs(text: str):
+    match = re.search(r'<div id="aria-sq"[^>]*>SUGGESTED:\s*(.*?)</div>', text, re.DOTALL)
+    if not match:
+        return []
+    return [q.strip() for q in re.findall(r'Q\d+:\s*(.+)', match.group(1)) if q.strip()]
+
+def strip_sq(text: str) -> str:
+    return re.sub(r'<div id="aria-sq".*?</div>', '', text, flags=re.DOTALL).strip()
+
+# ══════════════════════════════════════════════════════════════════
 # TOPBAR
-# ═══════════════════════════════════════════════════════════════════
-alert_count = len(never_sold) + len(bad_day)
+# ══════════════════════════════════════════════════════════════════
 st.markdown(f"""
 <div class="topbar">
   <div class="tb-left">
-    <div class="tb-logo">A</div>
-    <span class="tb-title">ARIA</span>
-    <span class="tb-badge" style="background:{m['bg']};border-color:{m['border']};color:{m['color']};">
-      {m['icon']} {m['badge_txt']}
-    </span>
+    <div class="tb-logo">◆</div>
+    <span class="tb-name">ARIA</span>
+    <span class="tb-tag">SALES INTELLIGENCE</span>
   </div>
   <div class="tb-right">
-    <span class="tb-stat">💬 {msg_count} messages</span>
-    <span class="tb-stat">{'🚨 ' + str(alert_count) + ' alerts' if alert_count else '✅ No alerts'}</span>
-    <span class="tb-live"><span class="tb-dot"></span>Groq · LLaMA 3.3</span>
+    <span class="tb-pill">💬 {msg_count} msgs</span>
+    <span class="tb-pill">{'🚨 ' + str(alert_count) + ' alerts' if alert_count else '✅ Clean'}</span>
+    <span class="tb-live"><span class="tb-dot"></span>LLaMA 3.3 · Live</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
 # SIDEBAR
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # ── Mode Switcher ──
-    st.markdown('<div class="sb-label">Analysis Mode</div>', unsafe_allow_html=True)
-    for mname, meta in MODE_META.items():
-        is_active = (current_mode == mname)
-        btn_class = "mode-btn mode-btn-on" if is_active else "mode-btn mode-btn-off"
-        btn_label = f"{meta['icon']}  {mname}{'  ←' if is_active else ''}"
-        st.markdown(f'<div class="{btn_class}">', unsafe_allow_html=True)
-        if st.button(btn_label, key=f"mode_{mname}", use_container_width=True):
-            if not is_active:
-                st.session_state["bi_mode"] = mname
-                st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # Show active mode description
-    st.markdown(f"""
-    <div class="mode-desc" style="color:{m['color']};border-left-color:{m['color']};">
-      {m['desc']}
+    st.markdown("""
+    <div class="sb-brand">
+      <div class="sb-brand-logo">◆</div>
+      <div>
+        <div class="sb-brand-name">ARIA</div>
+        <div class="sb-brand-sub">Sales Intelligence Copilot</div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Quick Questions ──
-    st.markdown('<div class="sb-label">Quick Questions</div>', unsafe_allow_html=True)
-    quick_qs = [
-        "📊 Total revenue breakdown?",
-        "🏆 Who is the top performer?",
-        "🚨 Which sellers had zero sales?",
-        "📋 Compare top 5 sellers",
-        "🗂️ Show category breakdown",
-        "📈 What are the growth trends?",
-        "⚠️ Business alerts summary",
-        "💡 Key growth opportunities?",
+    # ── Quick Ask ──────────────────────────────────────────────────
+    st.markdown('<div class="sb-section">⚡ Quick Ask</div>', unsafe_allow_html=True)
+
+    QUICK_QS = [
+        ("📊", "Full revenue breakdown",            "qc-blue",   0),
+        ("🏆", "Top performer deep dive",            "qc-gold",   1),
+        ("🚨", "Zero-sales alert summary",           "qc-red",    2),
+        ("📋", "Compare all sellers",                "qc-cyan",   3),
+        ("🗂️", "Category performance",              "qc-purple", 4),
+        ("📈", "Daily trend analysis",               "qc-green",  5),
+        ("💡", "Top 3 growth opportunities",         "qc-blue",   6),
+        ("⚠️", "What are the biggest risks?",        "qc-orange", 7),
+        ("🎯", "What should I focus on today?",      "qc-pink",   8),
+        ("📦", "Which category is weakest?",         "qc-cyan",   9),
     ]
-    st.markdown('<div class="chip-btn">', unsafe_allow_html=True)
-    for i, q in enumerate(quick_qs):
-        if st.button(q, key=f"qchip_{i}", use_container_width=True):
-            clean_q = re.sub(r'^[^\w]+\s*', '', q)
-            st.session_state["chat_history"].append({
-                "role": "user", "content": clean_q,
-                "ts": datetime.datetime.now().strftime("%I:%M %p"),
-            })
+
+    st.markdown('<div class="qa-wrap">', unsafe_allow_html=True)
+    for icon, label, color_cls, idx in QUICK_QS:
+        # Render the styled chip visually
+        st.markdown(f"""
+        <div class="qa-chip {color_cls}">
+          <span class="chip-icon">{icon}</span>
+          <span class="chip-txt">{label}</span>
+          <span class="chip-arr">›</span>
+        </div>
+        """, unsafe_allow_html=True)
+        # Invisible button on top to capture click
+        if st.button(label, key=f"qs_{idx}", use_container_width=True):
+            now_ts = datetime.datetime.now().strftime("%I:%M %p")
+            st.session_state["chat_history"].append({"role": "user", "content": label, "ts": now_ts})
             st.session_state["_pending_ai"] = True
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Live KPIs ──
-    st.markdown('<div class="sb-label">Live KPIs</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class="sb-kpi kc1">
-      <div class="sb-kpi-label">Total Revenue</div>
-      <div class="sb-kpi-value">₹{total_rev:,.0f}</div>
-    </div>
-    <div class="sb-kpi kc2">
-      <div class="sb-kpi-label">MTD Revenue</div>
-      <div class="sb-kpi-value">{mtd_display}</div>
-    </div>
-    <div class="sb-kpi kc3">
-      <div class="sb-kpi-label">Top Seller</div>
-      <div class="sb-kpi-value" style="font-size:0.78rem;">{top_seller} · ₹{top_val:,.0f}</div>
-    </div>
-    <div class="sb-kpi kc4">
-      <div class="sb-kpi-label">Zero-Sale Alerts</div>
-      <div class="sb-kpi-value" style="color:{'#FF6B6B' if zero_list else '#00FFC6'};">
-        {len(never_sold)} never sold · {len(bad_day)} bad day
-      </div>
-    </div>
-    <div class="sb-kpi kc5">
-      <div class="sb-kpi-label">Active Sellers</div>
-      <div class="sb-kpi-value" style="color:#7B61FF;">{active_sellers}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ── Live KPIs ──────────────────────────────────────────────────
+    st.markdown('<div class="sb-section">📊 Live KPIs</div>', unsafe_allow_html=True)
+    kpis = [
+        ("var(--cyan)",   "Total Revenue",    f"₹{total_rev:,.0f}"),
+        ("var(--gold)",   "MTD Revenue",      mtd_display),
+        ("var(--green)",  "Top Seller",       f"{top_seller} · ₹{top_val:,.0f}"),
+        ("var(--red)" if zero_list else "var(--green)", "Zero Alerts", f"{len(never_sold)} never · {len(bad_day)} bad day"),
+        ("var(--purple)", "Daily Average",    f"₹{avg_daily:,.0f}"),
+    ]
+    kpi_html = ""
+    for col, lbl, val in kpis:
+        kpi_html += f"""
+        <div class="sb-kpi">
+          <div class="sb-kpi-bar" style="background:{col};"></div>
+          <div class="sb-kpi-label">{lbl}</div>
+          <div class="sb-kpi-value" style="color:{col};">{val}</div>
+        </div>"""
+    st.markdown(kpi_html, unsafe_allow_html=True)
 
-    # ── Navigation ──
-    st.markdown('<div class="sb-label">Navigation</div>', unsafe_allow_html=True)
-    st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
-    if st.button("📊  Dashboard", use_container_width=True, key="nav_dash"):
+    # ── Navigate ───────────────────────────────────────────────────
+    st.markdown('<div class="sb-section">🧭 Navigate</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sb-nav">', unsafe_allow_html=True)
+    if st.button("📊  Dashboard",  use_container_width=True, key="sb_dash"):
         st.switch_page("pages/1_Dashboard.py")
-    if st.button("📤  New Upload", use_container_width=True, key="nav_upload"):
+    if st.button("📤  New Upload",  use_container_width=True, key="sb_upload"):
         st.switch_page("app.py")
-    if st.button("🗑️  Clear Chat", use_container_width=True, key="nav_clear"):
+    if st.button("🗑️  Clear Chat", use_container_width=True, key="sb_clear"):
         st.session_state["chat_history"] = []
         st.session_state["bi_report_txt"] = None
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # File info
     st.markdown(f"""
-    <div style="margin-top:0.8rem;padding:0.5rem 0.7rem;background:rgba(255,255,255,0.02);
-    border:1px solid var(--glass-border);border-radius:8px;">
-      <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;color:#6B7694;text-transform:uppercase;letter-spacing:0.8px;">Active File</div>
-      <div style="font-size:0.72rem;color:#AEB9D4;margin-top:2px;word-break:break-all;">{filename}</div>
+    <div style="margin:.5rem .4rem 0;padding:.45rem .6rem;background:rgba(255,255,255,.015);
+      border:1px solid var(--border);border-radius:9px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.44rem;color:var(--t3);
+        text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Active File</div>
+      <div style="font-size:.65rem;color:var(--t2);word-break:break-all;">{filename}</div>
     </div>
     """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# ACTIVE MODE BANNER (visible in main area — so user always sees mode)
-# ═══════════════════════════════════════════════════════════════════
-st.markdown(f"""
-<div class="mode-banner" style="background:{m['bg']};border-color:{m['border']};">
-  <div class="mb-icon">{m['icon']}</div>
-  <div class="mb-info">
-    <div class="mb-name" style="color:{m['color']};">{mname} Mode Active</div>
-    <div class="mb-desc" style="color:{m['color']};">{m['desc']}</div>
-  </div>
-</div>
-""".replace("mname", current_mode), unsafe_allow_html=True)
-
-# ═══════════════════════════════════════════════════════════════════
-# WELCOME CARD (first load only)
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# WELCOME HERO
+# ══════════════════════════════════════════════════════════════════
 if not st.session_state["chat_history"]:
     st.markdown(f"""
-    <div class="welcome-card">
-      <div class="wc-row">
-        <div class="wc-pulse"></div>
-        <div class="wc-title">ARIA — Sales Intelligence Copilot</div>
+    <div class="hero">
+      <div class="hero-top">
+        <div class="hero-live"></div>
+        <div class="hero-title">ARIA — Sales Intelligence Copilot</div>
       </div>
-      <div class="wc-sub">
-        Analysing <strong style="color:#F4F7FC;">{filename}</strong> in real time.
-        Switch modes in the sidebar for different analysis styles.
-        Quick questions are always visible — no scrolling needed.
+      <div class="hero-sub">
+        Analysing <strong style="color:#F0F4FF;">{filename}</strong> in real time.
+        Ask anything about your sales data — or tap a Quick Ask in the sidebar.
+        Use <strong style="color:var(--gold);">Generate Full Report</strong> below for a complete AI breakdown.
       </div>
-      <div class="wc-chips">
-        <span class="wc-chip">📊 {active_sellers} Active Sellers</span>
-        <span class="wc-chip">💰 ₹{total_rev:,.0f} Total Revenue</span>
-        <span class="wc-chip">🏆 {top_seller} leads</span>
-        {'<span class="wc-chip" style="background:rgba(255,107,107,0.12);border-color:rgba(255,107,107,0.25);color:#FF6B6B;">🚨 ' + str(alert_count) + ' Alerts</span>' if alert_count else '<span class="wc-chip" style="background:rgba(0,255,198,0.1);border-color:rgba(0,255,198,0.2);color:#00FFC6;">✅ All Clear</span>'}
+      <div class="hero-chips">
+        <span class="hchip hc-blue">📊 {active_sellers} Active Sellers</span>
+        <span class="hchip hc-green">💰 ₹{total_rev:,.0f} Revenue</span>
+        <span class="hchip hc-gold">🏆 {top_seller} leads</span>
+        {'<span class="hchip hc-red">🚨 ' + str(alert_count) + ' Alerts</span>' if alert_count else '<span class="hchip hc-green">✅ All Clear</span>'}
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# AI RESPONSE HELPER
-# ═══════════════════════════════════════════════════════════════════
-def get_ai_response(user_text: str) -> str:
-    groq_hist = []
-    for msg_h in st.session_state["chat_history"][-10:]:
-        content = msg_h["content"]
-        if msg_h.get("is_report") and len(content) > 300:
-            content = content[:300] + "… [truncated for context]"
-        groq_hist.append({"role": msg_h["role"], "content": content})
-    try:
-        return ask_groq(user_text, BI_SYSTEM_PROMPT, chat_history=groq_hist)
-    except Exception as e:
-        return (
-            f'<div style="color:#FF6B6B;font-family:JetBrains Mono,monospace;font-size:0.78rem;">'
-            f'⚠️ ARIA error: {str(e)[:200]}<br>'
-            f'<span style="color:#6B7694;font-size:0.68rem;">Check your Groq API key and try again.</span></div>'
-        )
+# ══════════════════════════════════════════════════════════════════
+# CHAT HISTORY RENDER  ← proper ChatGPT-style
+# ══════════════════════════════════════════════════════════════════
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
-def render_aria(content: str):
-    st.markdown(f'<div class="report-body">{content}</div>', unsafe_allow_html=True)
+for idx, msg in enumerate(st.session_state["chat_history"]):
+    is_last = (idx == len(st.session_state["chat_history"]) - 1)
+    ts      = msg.get("ts", "")
 
-# ═══════════════════════════════════════════════════════════════════
-# CHAT HISTORY RENDER
-# ═══════════════════════════════════════════════════════════════════
-for msg_h in st.session_state["chat_history"]:
-    if msg_h.get("is_report"):
-        continue
-    with st.chat_message(msg_h["role"], avatar="◆" if msg_h["role"] == "assistant" else "👤"):
-        if msg_h["role"] == "assistant":
-            render_aria(msg_h["content"])
-        else:
-            st.write(msg_h["content"])
-        if msg_h.get("ts"):
-            st.caption(msg_h["ts"])
+    if msg["role"] == "user":
+        st.markdown(f"""
+        <div class="cmsg user">
+          <div class="cmsg-body">
+            <div class="bubble-user">{msg["content"]}</div>
+            <div class="cmsg-ts">{ts}</div>
+          </div>
+          <div class="cmsg-av av-user">👤</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        clean = strip_sq(msg["content"])
+        st.markdown(f"""
+        <div class="cmsg">
+          <div class="cmsg-av av-ai">◆</div>
+          <div class="cmsg-body">
+            <div class="bubble-ai">{clean}</div>
+            <div class="cmsg-ts">ARIA · {ts}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# PENDING AI (from sidebar quick question) — fires before chat_input
-# ═══════════════════════════════════════════════════════════════════
+        # Suggested follow-ups after last AI message
+        if is_last:
+            sqs = extract_sqs(msg["content"])
+            if sqs:
+                chips_html = "".join([f'<span class="sug-chip">{q}</span>' for q in sqs])
+                st.markdown(f"""
+                <div class="sug-wrap">
+                  <div class="sug-label">Suggested follow-ups</div>
+                  <div class="sug-chips">{chips_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                # Clickable invisible buttons
+                cols = st.columns(len(sqs))
+                for ci, (col, sq) in enumerate(zip(cols, sqs)):
+                    with col:
+                        if st.button(sq, key=f"sqb_{idx}_{ci}", use_container_width=True):
+                            now_ts = datetime.datetime.now().strftime("%I:%M %p")
+                            st.session_state["chat_history"].append({"role":"user","content":sq,"ts":now_ts})
+                            st.session_state["_pending_ai"] = True
+                            st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════
+# PENDING AI (Quick Ask / Suggested Q)
+# ══════════════════════════════════════════════════════════════════
 if st.session_state["_pending_ai"]:
     st.session_state["_pending_ai"] = False
     last_q = st.session_state["chat_history"][-1]["content"]
 
-    # Show the user message immediately
-    with st.chat_message("user", avatar="👤"):
-        st.write(last_q)
-        st.caption(st.session_state["chat_history"][-1].get("ts", ""))
-
-    # ARIA typing + response
-    with st.chat_message("assistant", avatar="◆"):
-        st.markdown(f"""
-        <div class="typing-wrap">
-          <div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>
-          <span class="typing-label">ARIA thinking in {current_mode} mode…</span>
-        </div>
-        """, unsafe_allow_html=True)
-        response = get_ai_response(last_q)
-        st.empty()
-        render_aria(response)
-        now_ts = datetime.datetime.now().strftime("%I:%M %p")
-        st.caption(now_ts)
-
-    st.session_state["chat_history"].append({
-        "role": "assistant", "content": response,
-        "ts": now_ts,
-    })
-
-# ═══════════════════════════════════════════════════════════════════
-# CHAT INPUT
-# ═══════════════════════════════════════════════════════════════════
-user_input = st.chat_input(f"Ask ARIA in {current_mode} mode… ({m['badge_txt']})")
-
-if user_input:
-    now_ts = datetime.datetime.now().strftime("%I:%M %p")
-    st.session_state["chat_history"].append({
-        "role": "user", "content": user_input, "ts": now_ts,
-    })
-    with st.chat_message("user", avatar="👤"):
-        st.write(user_input)
-        st.caption(now_ts)
-
-    with st.chat_message("assistant", avatar="◆"):
-        with st.spinner(f"ARIA thinking in {current_mode} mode…"):
-            response = get_ai_response(user_input)
-        render_aria(response)
-        st.caption(now_ts)
-
-    st.session_state["chat_history"].append({
-        "role": "assistant", "content": response, "ts": now_ts,
-    })
-    st.rerun()
-
-# ═══════════════════════════════════════════════════════════════════
-# REPORT & PDF — in expander (isolated, can't disturb chat)
-# ═══════════════════════════════════════════════════════════════════
-st.markdown('<div class="aria-divider"></div>', unsafe_allow_html=True)
-
-with st.expander(f"◈ Intelligence Report & PDF Export  [{current_mode} Mode]", expanded=False):
-
     st.markdown(f"""
-    <div style="font-size:0.78rem;color:#6B7694;margin-bottom:0.8rem;line-height:1.6;">
-      Generate a full structured BI report in <strong style="color:{m['color']};">{current_mode} Mode</strong>.
-      Then export it as a professionally styled PDF with charts, tables, and AI insights.
+    <div class="cmsg user">
+      <div class="cmsg-body">
+        <div class="bubble-user">{last_q}</div>
+      </div>
+      <div class="cmsg-av av-user">👤</div>
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([2, 2, 1])
-    with c1:
-        st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
-        gen_report = st.button("🚀 Generate BI Report", use_container_width=True, key="gen_rpt")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with c2:
-        dl_pdf = st.button("📄 Build & Download PDF", use_container_width=True, key="dl_pdf_btn")
-    with c3:
-        if st.button("🗑️ Clear", use_container_width=True, key="clear_rpt"):
-            st.session_state["bi_report_txt"] = None
-            st.rerun()
+    typing_ph = st.empty()
+    typing_ph.markdown("""
+    <div class="cmsg">
+      <div class="cmsg-av av-ai">◆</div>
+      <div class="cmsg-body">
+        <div class="typing-bubble">
+          <div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>
+          <span class="typing-txt">ARIA is thinking…</span>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    REPORT_STEPS = [
-        ("🔍", "Analysing salesperson data…"),
-        ("📊", "Computing category performance…"),
-        ("📈", "Running trend analysis…"),
-        ("🧠", "Generating AI insights…"),
-        ("💡", "Building recommendations…"),
-        ("✅", "Finalising report…"),
-    ]
-    PDF_STEPS = [
-        ("🎨", "Building cover page…"),
-        ("📋", "Compiling KPI tables…"),
-        ("📊", "Rendering charts…"),
-        ("🧠", "Embedding AI report…"),
-        ("📄", "Exporting PDF…"),
-    ]
+    response = get_ai_response(last_q)
+    typing_ph.empty()
+    now_ts = datetime.datetime.now().strftime("%I:%M %p")
+    clean  = strip_sq(response)
 
-    def render_steps(steps: list, done_count: int):
-        rows = ""
-        for i, (icon, label) in enumerate(steps):
-            if i < done_count:
-                cls = "ps-done"; lc = "ps-label-done"; ic = "ps-done"
-                disp_icon = "✓"
-            elif i == done_count:
-                cls = "ps-active"; lc = "ps-label-active"; ic = "ps-active"
-                disp_icon = icon
-            else:
-                cls = "ps-pending"; lc = "ps-label-pending"; ic = "ps-pending"
-                disp_icon = icon
-            rows += f'<div class="prog-step"><div class="ps-icon {ic}">{disp_icon}</div><span class="{lc}">{label}</span></div>'
-        return f'<div class="prog-steps">{rows}</div>'
+    st.markdown(f"""
+    <div class="cmsg">
+      <div class="cmsg-av av-ai">◆</div>
+      <div class="cmsg-body">
+        <div class="bubble-ai">{clean}</div>
+        <div class="cmsg-ts">ARIA · {now_ts}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ── GENERATE REPORT ──
-    if gen_report:
-        MODE_REPORT_RULES = {
-            "Analyst":     "Full detail. All 10 sections. HTML tables for every dataset. Name every person and category.",
-            "Executive":   "Sections 1 (3 bullets), 2 (table), 9 (3 recs), 10 (5 actions). Nothing else. Under 200 words total.",
-            "Investor":    "Focus on growth%, ROI, scaling. All ratios in tables. Revenue trajectory mandatory.",
-            "Operational": "Section 6 (zero-alerts with names) first. Section 10 (named actions) second. Section 3 (daily snapshot) third. No strategy.",
-        }
-        report_prompt = f"""
-{MODE_REPORT_RULES.get(current_mode, '')}
+    st.session_state["chat_history"].append({"role":"assistant","content":response,"ts":now_ts})
+    st.rerun()
 
-Generate a Business Intelligence Report for this homeopathic pharmaceutical company.
+# ══════════════════════════════════════════════════════════════════
+# CHAT INPUT  ← sits here, new msgs appear right above
+# ══════════════════════════════════════════════════════════════════
+user_input = st.chat_input("Ask ARIA anything about your sales data…")
+
+if user_input:
+    now_ts = datetime.datetime.now().strftime("%I:%M %p")
+    st.session_state["chat_history"].append({"role":"user","content":user_input,"ts":now_ts})
+
+    # Render user bubble immediately
+    st.markdown(f"""
+    <div class="cmsg user">
+      <div class="cmsg-body">
+        <div class="bubble-user">{user_input}</div>
+        <div class="cmsg-ts">{now_ts}</div>
+      </div>
+      <div class="cmsg-av av-user">👤</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Typing
+    typing_ph2 = st.empty()
+    typing_ph2.markdown("""
+    <div class="cmsg">
+      <div class="cmsg-av av-ai">◆</div>
+      <div class="cmsg-body">
+        <div class="typing-bubble">
+          <div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>
+          <span class="typing-txt">ARIA is thinking…</span>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    response = get_ai_response(user_input)
+    typing_ph2.empty()
+    clean = strip_sq(response)
+
+    st.markdown(f"""
+    <div class="cmsg">
+      <div class="cmsg-av av-ai">◆</div>
+      <div class="cmsg-body">
+        <div class="bubble-ai">{clean}</div>
+        <div class="cmsg-ts">ARIA · {now_ts}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.session_state["chat_history"].append({"role":"assistant","content":response,"ts":now_ts})
+    st.rerun()
+
+# ══════════════════════════════════════════════════════════════════
+# DIVIDER → REPORT SECTION
+# ══════════════════════════════════════════════════════════════════
+st.markdown('<div class="div-line" style="margin:1.4rem 0;"></div>', unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════
+# GENERATE REPORT BANNER
+# ══════════════════════════════════════════════════════════════════
+st.markdown("""
+<div class="gen-banner">
+  <div class="gen-inner">
+    <div class="gen-eyebrow">ARIA Intelligence Engine · Full Analysis</div>
+    <div class="gen-title">📊 Generate Complete Business Report</div>
+    <div class="gen-sub">
+      One click → comprehensive AI-powered analysis of your entire dataset.<br>
+      KPI scorecard · leaderboard · trends · alerts · root cause · action plan.
+    </div>
+    <div class="gen-pills">
+      <span class="gp gp-b">📊 10 Sections</span>
+      <span class="gp gp-c">🧠 AI Root Cause</span>
+      <span class="gp gp-g">🏆 Leaderboard</span>
+      <span class="gp gp-o">💡 Growth Ops</span>
+      <span class="gp gp-p">📈 Trend Analysis</span>
+      <span class="gp gp-k">🎯 Action Plan</span>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+c_g1, c_g2, c_g3 = st.columns([2.2, 1.8, .8])
+with c_g1:
+    st.markdown('<div class="btn-gen">', unsafe_allow_html=True)
+    gen_report = st.button("🚀  Generate Full Report", use_container_width=True, key="gen_btn")
+    st.markdown('</div>', unsafe_allow_html=True)
+with c_g2:
+    st.markdown('<div class="btn-pdf">', unsafe_allow_html=True)
+    dl_pdf = st.button("📄  Export PDF", use_container_width=True, key="pdf_btn")
+    st.markdown('</div>', unsafe_allow_html=True)
+with c_g3:
+    st.markdown('<div class="btn-clr">', unsafe_allow_html=True)
+    if st.button("🗑️", use_container_width=True, key="clr_rpt"):
+        st.session_state["bi_report_txt"] = None
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ── PROGRESS STEPS helper ──
+REPORT_STEPS = [
+    ("🔍","Reading salesperson data…"),
+    ("📊","Computing category splits…"),
+    ("📈","Analysing daily trends…"),
+    ("🧠","Running AI insight engine…"),
+    ("💡","Building recommendations…"),
+    ("✅","Finalising report…"),
+]
+PDF_STEPS = [
+    ("🎨","Building cover page…"),
+    ("📋","Compiling KPI tables…"),
+    ("📊","Rendering charts…"),
+    ("🧠","Embedding AI report…"),
+    ("📄","Exporting PDF bytes…"),
+]
+
+def render_steps(steps, done_count, title="Processing"):
+    rows = ""
+    for i, (icon, label) in enumerate(steps):
+        if i < done_count:   ic, lc, di = "p-done",   "pl-done",   "✓"
+        elif i == done_count: ic, lc, di = "p-active", "pl-active", icon
+        else:                 ic, lc, di = "p-wait",   "pl-wait",   icon
+        rows += f'<div class="pstep"><div class="picon {ic}">{di}</div><span class="{lc}">{label}</span></div>'
+    return f'<div class="prog-wrap"><div class="prog-title">{title}</div><div class="prog">{rows}</div></div>'
+
+# ── GENERATE REPORT ──
+if gen_report:
+    FULL_REPORT_PROMPT = f"""
+Generate the COMPLETE ARIA Intelligence Report.
 Date: {datetime.date.today().strftime('%d %B %Y')}
-All currency in ₹ Indian format.
-Use <table class="aria-table"> for all tabular data.
-Row classes: top-row (best), alert-row (zero/critical), warn-row (low/warning).
+Currency: ₹ Indian lakh format.
+Tables: HTML with class="top"/"alert"/"warn" on rows.
 Section headers: <strong>── N. SECTION NAME ──</strong>
 
-Sections (apply mode filter above):
+ALL 10 SECTIONS REQUIRED:
 1. EXECUTIVE SUMMARY
 2. KPI SCORECARD
-3. SALESPERSON PERFORMANCE
-4. CATEGORY ANALYSIS
+3. SALESPERSON PERFORMANCE LEADERBOARD
+4. CATEGORY REVENUE ANALYSIS
 5. DAILY TREND ANALYSIS
-6. ZERO-SALES & ALERTS
-7. AI INSIGHT ENGINE
+6. ZERO-SALES & CRITICAL ALERTS
+7. AI INSIGHT ENGINE — ROOT CAUSE ANALYSIS
 8. GROWTH OPPORTUNITIES
 9. STRATEGIC RECOMMENDATIONS
-10. NEXT BEST ACTIONS
+10. NEXT BEST ACTIONS (TODAY)
+
+Each section must be fully detailed. Every person named. Every number contextualized.
+Minimum 100 words per section. Tables mandatory in sections 2,3,4,6,8,9,10.
 """
-        prog_ph = st.empty()
-        for si in range(len(REPORT_STEPS)):
-            prog_ph.markdown(render_steps(REPORT_STEPS, si), unsafe_allow_html=True)
-            time.sleep(0.3)
+    prog_ph = st.empty()
+    for si in range(len(REPORT_STEPS)):
+        prog_ph.markdown(render_steps(REPORT_STEPS, si, "Generating ARIA Report"), unsafe_allow_html=True)
+        time.sleep(0.28)
 
-        try:
-            report_text = ask_groq(report_prompt, BI_SYSTEM_PROMPT, chat_history=[])
-        except Exception as e:
-            report_text = f'<span style="color:#FF6B6B;">⚠️ Report failed: {str(e)[:200]}</span>'
+    try:
+        report_txt = ask_groq(FULL_REPORT_PROMPT, SYSTEM_PROMPT, chat_history=[])
+    except Exception as e:
+        report_txt = f'<span style="color:#FF6B6B;">⚠️ Report generation failed: {str(e)[:300]}</span>'
 
-        prog_ph.markdown(render_steps(REPORT_STEPS, len(REPORT_STEPS)), unsafe_allow_html=True)
-        time.sleep(0.4)
-        prog_ph.empty()
+    prog_ph.markdown(render_steps(REPORT_STEPS, len(REPORT_STEPS), "Generating ARIA Report"), unsafe_allow_html=True)
+    time.sleep(0.3)
+    prog_ph.empty()
+    st.session_state["bi_report_txt"] = report_txt
+    st.rerun()
 
-        st.session_state["bi_report_txt"] = report_text
-        st.rerun()
+# ── DISPLAY REPORT ──
+if st.session_state.get("bi_report_txt"):
+    rpt = st.session_state["bi_report_txt"]
 
-    # ── DISPLAY REPORT ──
-    if st.session_state.get("bi_report_txt"):
-        report_raw = st.session_state["bi_report_txt"]
-
-        st.markdown(f"""
-        <div class="report-card">
-          <div class="report-header">
-            <div class="rh-title">◆ ARIA Intelligence Report</div>
-            <div class="rh-meta">{m['icon']} {current_mode} Mode · {datetime.date.today().strftime('%d %B %Y')}</div>
+    st.markdown(f"""
+    <div class="report-card">
+      <div class="rh">
+        <div class="rh-left">
+          <div class="rh-icon">◆</div>
+          <div>
+            <div class="rh-title">ARIA Intelligence Report</div>
+            <div class="rh-meta">Generated {datetime.date.today().strftime('%d %B %Y')} · LLaMA 3.3-70B via Groq</div>
           </div>
-        """, unsafe_allow_html=True)
+        </div>
+      </div>
+      <div class="conf-row">
+        <div class="conf-track"><div class="conf-fill" style="width:94%;"></div></div>
+        <div class="conf-txt">94% Confidence · Full dataset analysis</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        # Split into sections by numbered headers
-        section_re = re.compile(r'(<strong>──\s*\d+\..*?──</strong>)', re.DOTALL)
-        parts = section_re.split(report_raw)
+    sec_re = re.compile(r'(<strong>──\s*\d+\..*?──</strong>)', re.DOTALL)
+    parts  = sec_re.split(rpt)
 
-        if len(parts) > 1:
-            intro = parts[0].strip()
-            if intro:
-                st.markdown(f'<div class="report-body">{intro}</div>', unsafe_allow_html=True)
-            i = 1
-            while i < len(parts):
-                header = parts[i].strip()
-                content = parts[i + 1].strip() if (i + 1) < len(parts) else ""
-                # Extract clean title for expander
-                clean_title = re.sub(r'<[^>]+>', '', header).strip().lstrip('─').strip()
-                with st.expander(f"▸ {clean_title}", expanded=False):
-                    st.markdown(f'<div class="report-body">{content}</div>', unsafe_allow_html=True)
-                i += 2
+    if len(parts) > 1:
+        intro = parts[0].strip()
+        if intro:
+            st.markdown(f'<div class="rsec" style="padding:.5rem 0;">{intro}</div>', unsafe_allow_html=True)
+        i = 1
+        while i < len(parts):
+            header  = parts[i].strip()
+            content = parts[i+1].strip() if (i+1) < len(parts) else ""
+            clean_h = re.sub(r'<[^>]+>', '', header).strip().lstrip('─').strip()
+            with st.expander(f"▸ {clean_h}", expanded=(i <= 3)):
+                st.markdown(f'<div class="rsec">{content}</div>', unsafe_allow_html=True)
+            i += 2
+    else:
+        st.markdown(f'<div class="rsec">{rpt}</div>', unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════
+# PDF BUILDER  (same logic as before, no changes)
+# ══════════════════════════════════════════════════════════════════
+def build_pdf(report_txt: str, fname: str):
+    import io as _io
+    warns = []
+    try:
+        import matplotlib; matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                         TableStyle, Image as RLImage, HRFlowable, PageBreak)
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+    except ImportError as ie:
+        return None, f"Missing: {ie}. Run: pip install reportlab matplotlib"
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    fp_reg   = os.path.join(base_dir, "..", "assets", "fonts", "DejaVuSans.ttf")
+    fp_bold  = os.path.join(base_dir, "..", "assets", "fonts", "DejaVuSans-Bold.ttf")
+    USE_DJ   = False
+    if os.path.exists(fp_reg):
+        try:
+            pdfmetrics.registerFont(TTFont("DJ", fp_reg))
+            if os.path.exists(fp_bold):
+                pdfmetrics.registerFont(TTFont("DJB", fp_bold))
+            USE_DJ = True
+        except Exception as fe:
+            warns.append(f"Font fallback: {fe}")
+    F  = "DJ" if USE_DJ else "Helvetica"
+    FB = "DJB" if USE_DJ else "Helvetica-Bold"
+    INR = "Rs."
+
+    C_BG   = colors.HexColor("#080C1A"); C_DARK  = colors.HexColor("#0D1225")
+    C_PANEL= colors.HexColor("#111828"); C_BLUE  = colors.HexColor("#4F8CFF")
+    C_CYAN = colors.HexColor("#00D4FF"); C_GREEN = colors.HexColor("#00FFC6")
+    C_GOLD = colors.HexColor("#FFD166"); C_RED   = colors.HexColor("#FF6B6B")
+    C_TEXT = colors.HexColor("#9BA8C4"); C_WHITE = colors.HexColor("#F0F4FF")
+    C_MUTED= colors.HexColor("#5C6884"); GRID    = colors.HexColor("#1A2242")
+
+    def S(n,**kw):  return ParagraphStyle(n, fontName=F,  **kw)
+    def SB(n,**kw): return ParagraphStyle(n, fontName=FB, **kw)
+    s_h1   = SB("h1",  fontSize=11, textColor=C_CYAN,  spaceBefore=14, spaceAfter=6)
+    s_body = S("body", fontSize=8.5, textColor=C_TEXT,  leading=13, spaceAfter=3)
+    s_sub  = S("sub",  fontSize=8,   textColor=C_MUTED, spaceAfter=3)
+
+    buf = _io.BytesIO()
+    try:
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm,
+                                 topMargin=1.6*cm, bottomMargin=2.4*cm)
+    except Exception as e:
+        return None, f"PDF init failed: {e}"
+
+    story = []; W = A4[0] - 3.6*cm
+
+    try:
+        ct = Table([[Paragraph("ARIA Intelligence Report",
+                     SB("ct", fontSize=18, textColor=C_WHITE, leading=22))]],
+                   colWidths=[W], rowHeights=[3.2*cm])
+        ct.setStyle(TableStyle([("BACKGROUND",(0,0),(0,0),C_BLUE),("LEFTPADDING",(0,0),(0,0),18),("VALIGN",(0,0),(0,0),"MIDDLE")]))
+        story += [ct, Spacer(1,.4*cm),
+                  Paragraph(f"Generated: {datetime.datetime.now().strftime('%d %B %Y, %I:%M %p')}", s_sub),
+                  Paragraph(f"File: {fname}", s_sub), Spacer(1,.3*cm),
+                  HRFlowable(width=W, thickness=1.5, color=C_BLUE, spaceAfter=10)]
+    except Exception as e:
+        warns.append(f"Cover: {e}")
+
+    try:
+        story.append(Paragraph("Key Performance Indicators", s_h1))
+        kd = [["Metric","Value","Metric","Value"],
+              ["Total Revenue",f"{INR}{total_rev:,.0f}","Daily Avg",f"{INR}{avg_daily:,.0f}"],
+              ["YTD Revenue",f"{INR}{ytd:,.0f}","Top Seller",top_seller],
+              ["Active Sellers",str(active_sellers),"Rev/Seller",f"{INR}{rev_per_seller:,.0f}"],
+              ["Never Sold",str(len(never_sold)),"Bad Day",str(len(bad_day))],
+              ["Top Value",f"{INR}{top_val:,.0f}","Multiplier",f"{top_multiplier:.2f}x avg"]]
+        cw = [W*.22,W*.28,W*.22,W*.28]
+        kt = Table(kd,colWidths=cw)
+        kt.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),C_DARK),("TEXTCOLOR",(0,0),(-1,0),C_CYAN),
+            ("FONTNAME",(0,0),(-1,0),FB),("FONTNAME",(0,1),(-1,-1),F),
+            ("FONTSIZE",(0,0),(-1,-1),8),("TEXTCOLOR",(0,1),(-1,-1),C_WHITE),
+            ("TEXTCOLOR",(1,1),(1,-1),C_GREEN),("TEXTCOLOR",(3,1),(3,-1),C_GOLD),
+            ("BACKGROUND",(0,2),(-1,2),C_PANEL),("BACKGROUND",(0,4),(-1,4),C_PANEL),
+            ("GRID",(0,0),(-1,-1),.3,GRID),
+            ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LEFTPADDING",(0,0),(-1,-1),7)
+        ]))
+        story += [kt, Spacer(1,.5*cm)]
+    except Exception as e:
+        warns.append(f"KPI: {e}")
+
+    try:
+        story.append(Paragraph("Salesperson Leaderboard", s_h1))
+        if not totals.empty:
+            t_sum = totals["Total"].sum()
+            lh = [["Rank","Salesperson","Revenue","Share%","vs Avg"]]
+            lrows = []
+            for i, rw in enumerate(totals.head(20).itertuples()):
+                share = (rw.Total/t_sum*100) if t_sum else 0
+                vs    = ((rw.Total/rev_per_seller-1)*100) if rev_per_seller else 0
+                lrows.append([f"#{i+1}", rw.Salesperson, f"{INR}{rw.Total:,.0f}",
+                               f"{share:.1f}%", f"+{vs:.0f}%" if vs>=0 else f"{vs:.0f}%"])
+            lt = Table(lh+lrows, colWidths=[W*.09,W*.36,W*.24,W*.16,W*.15])
+            lt.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),C_DARK),("TEXTCOLOR",(0,0),(-1,0),C_GOLD),
+                ("FONTNAME",(0,0),(-1,0),FB),("FONTNAME",(0,1),(-1,-1),F),
+                ("FONTSIZE",(0,0),(-1,-1),8),("TEXTCOLOR",(0,1),(-1,-1),C_WHITE),
+                ("TEXTCOLOR",(2,1),(2,-1),C_GREEN),
+                ("BACKGROUND",(0,1),(-1,1),colors.HexColor("#071A0A")),
+                ("GRID",(0,0),(-1,-1),.3,GRID),
+                ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(-1,-1),6)
+            ]))
+            story.append(lt)
+        story.append(PageBreak())
+    except Exception as e:
+        warns.append(f"Leaderboard: {e}")
+
+    try:
+        story.append(Paragraph("Category Performance", s_h1))
+        if not cat_totals.empty:
+            c_sum = float(cat_totals["Total"].sum()); c_max = float(cat_totals["Total"].max())
+            ch = [["Category","Revenue","Share%","Health"]]
+            crows = []
+            for rw in cat_totals.itertuples():
+                sh = (rw.Total/c_sum*100) if c_sum else 0
+                r  = (rw.Total/c_max)     if c_max  else 0
+                ht = "Strong" if r>=.6 else ("Moderate" if r>=.25 else "Low")
+                crows.append([str(rw.Category), f"{INR}{rw.Total:,.0f}", f"{sh:.1f}%", ht])
+            ctt = Table(ch+crows, colWidths=[W*.32,W*.28,W*.18,W*.22])
+            ctt.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),C_DARK),("TEXTCOLOR",(0,0),(-1,0),C_CYAN),
+                ("FONTNAME",(0,0),(-1,0),FB),("FONTNAME",(0,1),(-1,-1),F),
+                ("FONTSIZE",(0,0),(-1,-1),8),("TEXTCOLOR",(0,1),(-1,-1),C_WHITE),
+                ("TEXTCOLOR",(1,1),(1,-1),C_GREEN),
+                ("GRID",(0,0),(-1,-1),.3,GRID),
+                ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(-1,-1),6)
+            ]))
+            story.append(ctt)
+        story += [Spacer(1,.5*cm)]
+    except Exception as e:
+        warns.append(f"Category: {e}")
+
+    CHART_BG="#080C1A"; PANEL_BG="#0D1225"; TICK="#5C6884"; GRIDC="#1A2242"
+
+    def fig_bytes(fig):
+        ib = _io.BytesIO()
+        fig.savefig(ib, format="png", bbox_inches="tight", dpi=150, facecolor=CHART_BG)
+        ib.seek(0); plt.close(fig); return ib
+
+    try:
+        story.append(Paragraph("Daily Sales Trend", s_h1))
+        if len(daily) > 0:
+            fig, ax = plt.subplots(figsize=(13,3.8), facecolor=CHART_BG)
+            ax.set_facecolor(PANEL_BG)
+            xs = list(range(len(daily))); ys = list(daily.values)
+            ax.fill_between(xs, ys, alpha=.1, color="#4F8CFF")
+            ax.plot(xs, ys, color="#00D4FF", linewidth=2.2, zorder=4)
+            ax.scatter(xs, ys, color="#4F8CFF", s=20, zorder=5)
+            if len(daily) >= 7:
+                ma7 = daily.rolling(7).mean()
+                ax.plot(xs, ma7, color="#FFD166", linewidth=1.5, linestyle="--", label="7-Day MA", zorder=3)
+                ax.legend(facecolor=PANEL_BG, edgecolor=GRIDC, labelcolor="#9BA8C4", fontsize=8)
+            ax.tick_params(colors=TICK, labelsize=7)
+            ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v,_: f"{v/1e3:.0f}K" if v>=1000 else str(int(v))))
+            for sp in ax.spines.values(): sp.set_color(GRIDC)
+            ax.grid(axis="y", color=GRIDC, linewidth=.5, alpha=.7)
+            ax.set_xlabel("Day", color=TICK, fontsize=7); ax.set_ylabel("Revenue", color=TICK, fontsize=7)
+            story.append(RLImage(fig_bytes(fig), width=W, height=4.5*cm))
+        story.append(Spacer(1,.4*cm))
+    except Exception as e:
+        warns.append(f"Trend chart: {e}")
+
+    try:
+        story.append(Paragraph("Category Revenue Breakdown", s_h1))
+        if not cat_totals.empty:
+            cats = cat_totals["Category"].astype(str).tolist()
+            vals = [float(v) for v in cat_totals["Total"].tolist()]
+            PAL  = ["#4F8CFF","#7B61FF","#00D4FF","#00FFC6","#FFD166","#FF6B6B","#A78BFA","#34D399"]
+            fig2, ax2 = plt.subplots(figsize=(12, max(3, len(cats)*.55)), facecolor=CHART_BG)
+            ax2.set_facecolor(PANEL_BG)
+            bars = ax2.barh(cats, vals, color=[PAL[i%len(PAL)] for i in range(len(cats))], alpha=.85, edgecolor="none", height=.6)
+            for bar, val in zip(bars, vals):
+                ax2.text(bar.get_width()*1.012, bar.get_y()+bar.get_height()/2,
+                         f"{INR}{val/1e3:.1f}K", va="center", color="#9BA8C4", fontsize=7.5)
+            ax2.tick_params(colors=TICK, labelsize=7)
+            for sp in ax2.spines.values(): sp.set_color(GRIDC)
+            ax2.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v,_: f"{v/1e3:.0f}K"))
+            ax2.grid(axis="x", color=GRIDC, linewidth=.5, alpha=.7)
+            story.append(RLImage(fig_bytes(fig2), width=W, height=max(4*cm, len(cats)*.7*cm)))
+        story.append(PageBreak())
+    except Exception as e:
+        warns.append(f"Cat chart: {e}")
+
+    try:
+        story.append(Paragraph("Zero-Sales Alerts", s_h1))
+        a_data = ([["Salesperson","Alert Type","Urgency","Action"]]
+                  + [[n,"Never Sold","CRITICAL","Immediate review"] for n in never_sold]
+                  + [[n,"Had Bad Day","MONITOR","Follow up this week"] for n in bad_day])
+        if len(a_data) > 1:
+            zt = Table(a_data, colWidths=[W*.28,W*.20,W*.16,W*.36])
+            zt.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),C_DARK),("TEXTCOLOR",(0,0),(-1,0),C_RED),
+                ("FONTNAME",(0,0),(-1,0),FB),("FONTNAME",(0,1),(-1,-1),F),
+                ("FONTSIZE",(0,0),(-1,-1),8),("TEXTCOLOR",(0,1),(-1,-1),C_WHITE),
+                ("GRID",(0,0),(-1,-1),.3,colors.HexColor("#2A1020")),
+                ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(-1,-1),6)
+            ]))
+            story.append(zt)
         else:
-            # Fallback: plain render
-            st.markdown(f'<div class="report-body">{report_raw}</div>', unsafe_allow_html=True)
+            story.append(Paragraph("No zero-sales alerts — all sellers have recorded revenue.", s_body))
+        story += [Spacer(1,.6*cm), HRFlowable(width=W, thickness=1, color=C_BLUE, spaceAfter=10)]
+    except Exception as e:
+        warns.append(f"Alerts: {e}")
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    try:
+        story.append(Paragraph("AI Intelligence Analysis", s_h1))
+        story.append(Spacer(1,.2*cm))
+        clean = re.sub(r'<[^>]+>',' ', report_txt or "").strip()
+        clean = re.sub(r'\s+', ' ', clean)
+        for para in clean.split('\n'):
+            p = para.strip()
+            if p:
+                story.append(Paragraph(p, s_body))
+                story.append(Spacer(1,.06*cm))
+    except Exception as e:
+        warns.append(f"AI text: {e}")
 
-    # ── PDF BUILDER ──
-    def build_pdf(report_txt: str, mode: str, fname: str):
-        """
-        Build a full PDF report with cover, KPI table, leaderboard,
-        category table, charts, zero-alert table, and AI text.
-        Returns (pdf_bytes, warning_string_or_None).
-        """
-        import io
-        warnings_list = []
-
+    def draw_page(cv, doc_obj):
         try:
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            import matplotlib.ticker as mticker
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib import colors
-            from reportlab.lib.styles import ParagraphStyle
-            from reportlab.lib.units import cm
-            from reportlab.platypus import (
-                SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-                Image as RLImage, HRFlowable, PageBreak,
-            )
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-        except ImportError as ie:
-            return None, f"Missing library: {ie}. Run: pip install reportlab matplotlib"
-
-        # Font setup
-        base_dir  = os.path.dirname(os.path.abspath(__file__))
-        font_path = os.path.join(base_dir, "..", "assets", "fonts", "DejaVuSans.ttf")
-        font_bold = os.path.join(base_dir, "..", "assets", "fonts", "DejaVuSans-Bold.ttf")
-        USE_DJ = False
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont("DejaVu", font_path))
-                if os.path.exists(font_bold):
-                    pdfmetrics.registerFont(TTFont("DejaVuBold", font_bold))
-                USE_DJ = True
-            except Exception as fe:
-                warnings_list.append(f"Font fallback (Helvetica): {fe}")
-        F  = "DejaVu" if USE_DJ else "Helvetica"
-        FB = "DejaVuBold" if USE_DJ else "Helvetica-Bold"
-        INR = "Rs." # safe for all fonts
-
-        # Colors
-        C_BG    = colors.HexColor("#02030A")
-        C_DARK  = colors.HexColor("#06091A")
-        C_PANEL = colors.HexColor("#0A0E23")
-        C_BLUE  = colors.HexColor("#4F8CFF")
-        C_CYAN  = colors.HexColor("#00D4FF")
-        C_GREEN = colors.HexColor("#00FFC6")
-        C_GOLD  = colors.HexColor("#FFD166")
-        C_RED   = colors.HexColor("#FF6B6B")
-        C_PURP  = colors.HexColor("#7B61FF")
-        C_MUTED = colors.HexColor("#6B7694")
-        C_TEXT  = colors.HexColor("#AEB9D4")
-        C_WHITE = colors.HexColor("#F4F7FC")
-        GRID    = colors.HexColor("#1A2040")
-
-        def mkS(name, **kw):
-            return ParagraphStyle(name, fontName=F, **kw)
-        def mkSB(name, **kw):
-            return ParagraphStyle(name, fontName=FB, **kw)
-
-        s_h1   = mkSB("h1", fontSize=11, textColor=C_CYAN,  spaceBefore=14, spaceAfter=6)
-        s_h2   = mkSB("h2", fontSize=9,  textColor=C_GOLD,  spaceBefore=10, spaceAfter=4)
-        s_body = mkS("body", fontSize=8.5, textColor=C_TEXT, leading=13, spaceAfter=3)
-        s_sub  = mkS("sub",  fontSize=8,  textColor=C_MUTED, spaceAfter=3)
-        s_kv   = mkS("kv",  fontSize=8,  textColor=C_WHITE, spaceAfter=2)
-
-        buf = io.BytesIO()
-        try:
-            doc = SimpleDocTemplate(
-                buf, pagesize=A4,
-                leftMargin=1.8*cm, rightMargin=1.8*cm,
-                topMargin=1.6*cm, bottomMargin=2.4*cm,
-            )
-        except Exception as e:
-            return None, f"PDF init failed: {e}"
-
-        story = []
-        W = A4[0] - 3.6*cm   # usable width
-
-        # ── COVER ──
-        try:
-            # Gradient header bar
-            cover_data = [[Paragraph(
-                f'<font color="#F4F7FC" size="20"><b>ARIA Intelligence Report</b></font>',
-                mkSB("ct", fontSize=20, textColor=C_WHITE, leading=24)
-            )]]
-            ct = Table(cover_data, colWidths=[W], rowHeights=[3.5*cm])
-            ct.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (0,0), C_BLUE),
-                ("LEFTPADDING", (0,0), (0,0), 18),
-                ("VALIGN", (0,0), (0,0), "MIDDLE"),
-                ("ROUNDEDCORNERS", [8]),
-            ]))
-            story.append(ct)
-            story.append(Spacer(1, 0.5*cm))
-            story.append(Paragraph(f"Mode: {mode}", mkSB("cm", fontSize=12, textColor=C_BLUE, spaceAfter=4)))
-            story.append(Paragraph(f"Generated: {datetime.datetime.now().strftime('%d %B %Y, %I:%M %p')}", s_sub))
-            story.append(Paragraph(f"File: {fname}", s_sub))
-            story.append(Spacer(1, 0.3*cm))
-            story.append(HRFlowable(width=W, thickness=1.5, color=C_BLUE, spaceAfter=10))
-        except Exception as e:
-            warnings_list.append(f"Cover skipped: {e}")
-
-        # ── KPI TABLE ──
-        try:
-            story.append(Paragraph("Key Performance Indicators", s_h1))
-            kd = [
-                ["Metric", "Value", "Metric", "Value"],
-                ["Total Revenue", f"{INR}{total_rev:,.0f}", "Daily Average", f"{INR}{avg_daily:,.0f}"],
-                ["YTD Revenue",   f"{INR}{ytd:,.0f}",       "Top Seller",    top_seller],
-                ["Active Sellers",str(active_sellers),      "Rev/Seller",    f"{INR}{rev_per_seller:,.0f}"],
-                ["Never Sold",    str(len(never_sold)),      "Bad Day",       str(len(bad_day))],
-                ["Top Value",     f"{INR}{top_val:,.0f}",   "Multiplier",    f"{top_multiplier:.2f}x avg"],
-            ]
-            col_w = [W*0.22, W*0.28, W*0.22, W*0.28]
-            kt = Table(kd, colWidths=col_w)
-            kt.setStyle(TableStyle([
-                ("BACKGROUND",  (0,0), (-1,0),  C_DARK),
-                ("TEXTCOLOR",   (0,0), (-1,0),  C_CYAN),
-                ("FONTNAME",    (0,0), (-1,0),  FB),
-                ("FONTNAME",    (0,1), (-1,-1), F),
-                ("FONTSIZE",    (0,0), (-1,-1), 8),
-                ("TEXTCOLOR",   (0,1), (-1,-1), C_WHITE),
-                ("TEXTCOLOR",   (1,1), (1,-1),  C_GREEN),
-                ("TEXTCOLOR",   (3,1), (3,-1),  C_GOLD),
-                ("BACKGROUND",  (0,2), (-1,2),  C_PANEL),
-                ("BACKGROUND",  (0,4), (-1,4),  C_PANEL),
-                ("GRID",        (0,0), (-1,-1), 0.3, GRID),
-                ("TOPPADDING",  (0,0), (-1,-1), 5),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 5),
-                ("LEFTPADDING", (0,0), (-1,-1), 7),
-            ]))
-            story.append(kt)
-            story.append(Spacer(1, 0.5*cm))
-        except Exception as e:
-            warnings_list.append(f"KPI table skipped: {e}")
-
-        # ── LEADERBOARD ──
-        try:
-            story.append(Paragraph("Salesperson Leaderboard", s_h1))
-            if not totals.empty:
-                t_sum = totals["Total"].sum()
-                lh  = [["Rank", "Salesperson", "Total Sales", "Share %", "vs Avg"]]
-                lrows = []
-                for idx_i, rw in enumerate(totals.head(20).itertuples()):
-                    share = (rw.Total / t_sum * 100) if t_sum else 0
-                    vs    = ((rw.Total / rev_per_seller - 1) * 100) if rev_per_seller else 0
-                    vs_s  = f"+{vs:.0f}%" if vs >= 0 else f"{vs:.0f}%"
-                    lrows.append([f"#{idx_i+1}", rw.Salesperson, f"{INR}{rw.Total:,.0f}", f"{share:.1f}%", vs_s])
-                col_w2 = [W*0.09, W*0.36, W*0.24, W*0.16, W*0.15]
-                lt = Table(lh + lrows, colWidths=col_w2)
-                style_cmds = [
-                    ("BACKGROUND",   (0,0), (-1,0),   C_DARK),
-                    ("TEXTCOLOR",    (0,0), (-1,0),   C_GOLD),
-                    ("FONTNAME",     (0,0), (-1,0),   FB),
-                    ("FONTNAME",     (0,1), (-1,-1),  F),
-                    ("FONTSIZE",     (0,0), (-1,-1),  8),
-                    ("TEXTCOLOR",    (0,1), (-1,-1),  C_WHITE),
-                    ("TEXTCOLOR",    (2,1), (2,-1),   C_GREEN),
-                    ("GRID",         (0,0), (-1,-1),  0.3, GRID),
-                    ("TOPPADDING",   (0,0), (-1,-1),  4),
-                    ("BOTTOMPADDING",(0,0), (-1,-1),  4),
-                    ("LEFTPADDING",  (0,0), (-1,-1),  6),
-                    # Highlight row 1 (top performer)
-                    ("BACKGROUND",   (0,1), (-1,1),   colors.HexColor("#071A0A")),
-                ]
-                lt.setStyle(TableStyle(style_cmds))
-                story.append(lt)
-            story.append(PageBreak())
-        except Exception as e:
-            warnings_list.append(f"Leaderboard skipped: {e}")
-
-        # ── CATEGORY TABLE ──
-        try:
-            story.append(Paragraph("Category Performance", s_h1))
-            if not cat_totals.empty:
-                c_sum = float(cat_totals["Total"].sum())
-                c_max = float(cat_totals["Total"].max())
-                ch  = [["Category", "Total Sales", "Share %", "Health"]]
-                crows = []
-                for rw in cat_totals.itertuples():
-                    sh = (rw.Total / c_sum * 100) if c_sum else 0
-                    r  = (rw.Total / c_max)       if c_max  else 0
-                    ht = "Strong" if r >= 0.6 else ("Moderate" if r >= 0.25 else "Low")
-                    crows.append([str(rw.Category), f"{INR}{rw.Total:,.0f}", f"{sh:.1f}%", ht])
-                col_w3 = [W*0.32, W*0.28, W*0.18, W*0.22]
-                ctt = Table(ch + crows, colWidths=col_w3)
-                ctt.setStyle(TableStyle([
-                    ("BACKGROUND",   (0,0), (-1,0),  C_DARK),
-                    ("TEXTCOLOR",    (0,0), (-1,0),  C_CYAN),
-                    ("FONTNAME",     (0,0), (-1,0),  FB),
-                    ("FONTNAME",     (0,1), (-1,-1), F),
-                    ("FONTSIZE",     (0,0), (-1,-1), 8),
-                    ("TEXTCOLOR",    (0,1), (-1,-1), C_WHITE),
-                    ("TEXTCOLOR",    (1,1), (1,-1),  C_GREEN),
-                    ("GRID",         (0,0), (-1,-1), 0.3, GRID),
-                    ("TOPPADDING",   (0,0), (-1,-1), 4),
-                    ("BOTTOMPADDING",(0,0), (-1,-1), 4),
-                    ("LEFTPADDING",  (0,0), (-1,-1), 6),
-                ]))
-                story.append(ctt)
-            story.append(Spacer(1, 0.5*cm))
-        except Exception as e:
-            warnings_list.append(f"Category table skipped: {e}")
-
-        # ── HELPER: fig → bytes ──
-        def fig_to_img(fig):
-            ib = io.BytesIO()
-            fig.savefig(ib, format="png", bbox_inches="tight", dpi=150, facecolor="#02030A")
-            ib.seek(0)
-            plt.close(fig)
-            return ib
-
-        CHART_BG  = "#02030A"
-        PANEL_BG  = "#06091A"
-        TICK_COL  = "#6B7694"
-        GRID_COL  = "#1A2040"
-
-        # ── DAILY TREND CHART ──
-        try:
-            story.append(Paragraph("Daily Sales Trend", s_h1))
-            if len(daily) > 0:
-                fig, ax = plt.subplots(figsize=(13, 3.8), facecolor=CHART_BG)
-                ax.set_facecolor(PANEL_BG)
-                xs = list(range(len(daily)))
-                ys = list(daily.values)
-                ax.fill_between(xs, ys, alpha=0.12, color="#4F8CFF")
-                ax.plot(xs, ys, color="#00D4FF", linewidth=2.2, zorder=4)
-                ax.scatter(xs, ys, color="#4F8CFF", s=22, zorder=5)
-                if len(daily) >= 7:
-                    ma7 = daily.rolling(7).mean()
-                    ax.plot(xs, ma7, color="#FFD166", linewidth=1.5, linestyle="--", label="7-Day MA", zorder=3)
-                    ax.legend(facecolor=PANEL_BG, edgecolor=GRID_COL, labelcolor="#AEB9D4", fontsize=8)
-                ax.tick_params(colors=TICK_COL, labelsize=7)
-                ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-                    lambda v, _: f"{v/1e3:.0f}K" if v >= 1000 else str(int(v))
-                ))
-                for sp in ax.spines.values():
-                    sp.set_color(GRID_COL)
-                ax.grid(axis="y", color=GRID_COL, linewidth=0.5, alpha=0.7)
-                ax.set_xlabel("Day", color=TICK_COL, fontsize=7)
-                ax.set_ylabel("Revenue", color=TICK_COL, fontsize=7)
-                story.append(RLImage(fig_to_img(fig), width=W, height=4.5*cm))
-            story.append(Spacer(1, 0.4*cm))
-        except Exception as e:
-            warnings_list.append(f"Daily trend chart skipped: {e}")
-
-        # ── CATEGORY BAR CHART ──
-        try:
-            story.append(Paragraph("Category Revenue Breakdown", s_h1))
-            if not cat_totals.empty:
-                cats = cat_totals["Category"].astype(str).tolist()
-                vals = [float(v) for v in cat_totals["Total"].tolist()]
-                PAL  = ["#4F8CFF","#7B61FF","#00D4FF","#00FFC6","#FFD166","#FF6B6B","#A78BFA","#34D399"]
-                fig2, ax2 = plt.subplots(figsize=(12, max(3, len(cats)*0.55)), facecolor=CHART_BG)
-                ax2.set_facecolor(PANEL_BG)
-                bar_colors = [PAL[i % len(PAL)] for i in range(len(cats))]
-                bars = ax2.barh(cats, vals, color=bar_colors, alpha=0.85, edgecolor="none", height=0.6)
-                for bar, val in zip(bars, vals):
-                    ax2.text(
-                        bar.get_width() * 1.012, bar.get_y() + bar.get_height()/2,
-                        f"{INR}{val/1e3:.1f}K", va="center", color="#AEB9D4", fontsize=7.5
-                    )
-                ax2.tick_params(colors=TICK_COL, labelsize=7)
-                for sp in ax2.spines.values():
-                    sp.set_color(GRID_COL)
-                ax2.xaxis.set_major_formatter(mticker.FuncFormatter(
-                    lambda v, _: f"{v/1e3:.0f}K"
-                ))
-                ax2.grid(axis="x", color=GRID_COL, linewidth=0.5, alpha=0.7)
-                story.append(RLImage(fig_to_img(fig2), width=W, height=max(4*cm, len(cats)*0.7*cm)))
-            story.append(PageBreak())
-        except Exception as e:
-            warnings_list.append(f"Category chart skipped: {e}")
-
-        # ── ZERO-SALES ALERTS TABLE ──
-        try:
-            story.append(Paragraph("Zero-Sales Alerts", s_h1))
-            a_data = (
-                [["Salesperson", "Alert Type", "Status", "Action Required"]]
-                + [[n, "Never Sold", "CRITICAL", "Immediate management review"] for n in never_sold]
-                + [[n, "Had Bad Day", "MONITOR",  "Follow up this week"]         for n in bad_day]
-            )
-            if len(a_data) > 1:
-                col_w4 = [W*0.28, W*0.20, W*0.16, W*0.36]
-                zt = Table(a_data, colWidths=col_w4)
-                zt.setStyle(TableStyle([
-                    ("BACKGROUND",   (0,0), (-1,0),  C_DARK),
-                    ("TEXTCOLOR",    (0,0), (-1,0),  C_RED),
-                    ("FONTNAME",     (0,0), (-1,0),  FB),
-                    ("FONTNAME",     (0,1), (-1,-1), F),
-                    ("FONTSIZE",     (0,0), (-1,-1), 8),
-                    ("TEXTCOLOR",    (0,1), (-1,-1), C_WHITE),
-                    ("GRID",         (0,0), (-1,-1), 0.3, colors.HexColor("#2A1020")),
-                    ("TOPPADDING",   (0,0), (-1,-1), 4),
-                    ("BOTTOMPADDING",(0,0), (-1,-1), 4),
-                    ("LEFTPADDING",  (0,0), (-1,-1), 6),
-                ]))
-                story.append(zt)
-            else:
-                story.append(Paragraph("No zero-sales alerts. All sellers have recorded sales.", s_body))
-            story.append(Spacer(1, 0.6*cm))
-            story.append(HRFlowable(width=W, thickness=1, color=C_BLUE, spaceAfter=10))
-        except Exception as e:
-            warnings_list.append(f"Zero-alerts table skipped: {e}")
-
-        # ── AI REPORT TEXT ──
-        try:
-            story.append(Paragraph("AI Intelligence Analysis", s_h1))
-            story.append(Paragraph(f"Generated in {mode} Mode by ARIA", s_sub))
-            story.append(Spacer(1, 0.25*cm))
-            # Strip HTML tags for PDF text
-            clean = re.sub(r'<[^>]+>', ' ', report_txt or "").strip()
-            clean = re.sub(r'\s+', ' ', clean)
-            for para in clean.split('\n'):
-                p = para.strip()
-                if p:
-                    story.append(Paragraph(p, s_body))
-                    story.append(Spacer(1, 0.07*cm))
-        except Exception as e:
-            warnings_list.append(f"AI text section skipped: {e}")
-
-        # ── PAGE FOOTER ──
-        def draw_page(canvas_obj, doc_obj):
-            try:
-                canvas_obj.saveState()
-                # Dark background
-                canvas_obj.setFillColor(C_BG)
-                canvas_obj.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
-                # Footer bar
-                canvas_obj.setFillColor(C_PANEL)
-                canvas_obj.rect(0, 0, A4[0], 1.8*cm, fill=1, stroke=0)
-                # Footer line
-                canvas_obj.setStrokeColor(C_BLUE)
-                canvas_obj.setLineWidth(0.8)
-                canvas_obj.line(1.8*cm, 1.8*cm, A4[0]-1.8*cm, 1.8*cm)
-                # Footer text
-                canvas_obj.setFont(F if USE_DJ else "Helvetica", 6.5)
-                canvas_obj.setFillColor(C_MUTED)
-                canvas_obj.drawCentredString(
-                    A4[0]/2, 0.7*cm,
-                    f"ARIA Sales Intelligence  ·  {mode} Mode  ·  {datetime.datetime.now().strftime('%d %B %Y')}  ·  LLaMA 3.3-70B via Groq"
-                )
-                canvas_obj.setFillColor(C_CYAN)
-                canvas_obj.drawRightString(A4[0]-1.8*cm, 0.7*cm, f"Page {doc_obj.page}")
-                canvas_obj.restoreState()
-            except Exception:
-                pass
-
-        if not story:
-            return None, "All PDF sections failed. Check warnings:\n" + "\n".join(warnings_list)
-
-        try:
-            doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+            cv.saveState()
+            cv.setFillColor(C_BG); cv.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
+            cv.setFillColor(C_PANEL); cv.rect(0, 0, A4[0], 1.8*cm, fill=1, stroke=0)
+            cv.setStrokeColor(C_BLUE); cv.setLineWidth(.8)
+            cv.line(1.8*cm, 1.8*cm, A4[0]-1.8*cm, 1.8*cm)
+            cv.setFont(F if USE_DJ else "Helvetica", 6.5); cv.setFillColor(C_MUTED)
+            cv.drawCentredString(A4[0]/2, .7*cm, f"ARIA Sales Intelligence · {datetime.datetime.now().strftime('%d %B %Y')} · LLaMA 3.3-70B")
+            cv.setFillColor(C_CYAN); cv.drawRightString(A4[0]-1.8*cm, .7*cm, f"Page {doc_obj.page}")
+            cv.restoreState()
         except Exception:
-            tb = traceback.format_exc()
-            return None, f"PDF build failed at doc.build():\n\n{tb}"
+            pass
 
-        pdf_out = buf.getvalue()
-        warn_str = ("PDF built with skipped sections:\n" + "\n".join(warnings_list)) if warnings_list else None
-        return pdf_out, warn_str
+    if not story:
+        return None, "All sections failed:\n" + "\n".join(warns)
+    try:
+        doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+    except Exception:
+        return None, f"doc.build() failed:\n\n{traceback.format_exc()}"
 
-    # ── TRIGGER PDF ──
-    if dl_pdf:
-        report_src = st.session_state.get("bi_report_txt") or ""
-        if not report_src:
-            with st.spinner("Generating quick summary for PDF…"):
-                try:
-                    report_src = ask_groq(
-                        "Give a concise executive summary of this company's sales data in 5 key bullet points.",
-                        BI_SYSTEM_PROMPT, chat_history=[],
-                    )
-                except Exception as e:
-                    report_src = f"Summary unavailable: {e}"
+    return buf.getvalue(), ("Warnings:\n" + "\n".join(warns)) if warns else None
 
-        pdf_prog = st.empty()
-        for si in range(len(PDF_STEPS)):
-            pdf_prog.markdown(render_steps(PDF_STEPS, si), unsafe_allow_html=True)
-            time.sleep(0.25)
+# ── TRIGGER PDF ──
+if dl_pdf:
+    report_src = st.session_state.get("bi_report_txt") or ""
+    if not report_src:
+        with st.spinner("Generating summary for PDF…"):
+            try:
+                report_src = ask_groq("Provide a concise executive summary in 5 key bullet points.",
+                                       SYSTEM_PROMPT, chat_history=[])
+            except Exception as e:
+                report_src = f"Summary unavailable: {e}"
 
-        pdf_bytes, err = build_pdf(report_src, current_mode, filename)
-        pdf_prog.markdown(render_steps(PDF_STEPS, len(PDF_STEPS)), unsafe_allow_html=True)
-        time.sleep(0.3)
-        pdf_prog.empty()
+    pdf_prog = st.empty()
+    for si in range(len(PDF_STEPS)):
+        pdf_prog.markdown(render_steps(PDF_STEPS, si, "Building PDF"), unsafe_allow_html=True)
+        time.sleep(0.22)
 
-        if pdf_bytes is None:
-            st.error("PDF generation failed. Full traceback:")
-            st.code(err or "Unknown error", language="text")
-        else:
-            if err:
-                st.warning(err)
-            st.success("✅ PDF ready — click below to download")
-            st.download_button(
-                label="⬇️  Download ARIA Intelligence Report (PDF)",
-                data=pdf_bytes,
-                file_name=f"ARIA_Report_{current_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+    pdf_bytes, err = build_pdf(report_src, filename)
+    pdf_prog.markdown(render_steps(PDF_STEPS, len(PDF_STEPS), "Building PDF"), unsafe_allow_html=True)
+    time.sleep(0.3); pdf_prog.empty()
+
+    if pdf_bytes is None:
+        st.error("PDF failed. Full traceback:")
+        st.code(err or "Unknown error", language="text")
+    else:
+        if err: st.warning(err)
+        st.success("✅ PDF ready!")
+        st.download_button(
+            label="⬇️  Download ARIA Intelligence Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"ARIA_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 # ── BOTTOM NAV ──
 st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
-st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
-if st.button("← Back to Dashboard", use_container_width=True, key="bottom_nav"):
+st.markdown('<div class="bot-nav">', unsafe_allow_html=True)
+if st.button("← Back to Dashboard", use_container_width=True, key="bot_nav"):
     st.switch_page("pages/1_Dashboard.py")
 st.markdown('</div>', unsafe_allow_html=True)

@@ -1,4 +1,8 @@
 import streamlit as st
+if not st.session_state.get("password_correct", False):
+    st.stop()
+
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go

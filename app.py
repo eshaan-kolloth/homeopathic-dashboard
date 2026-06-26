@@ -2,6 +2,31 @@ import streamlit as st
 import time
 from utils.data_loader import get_clean_dataframe
 
+# ──────────────────────────────────────────────────────────────────────────────
+# LOGIN GATE — must run before anything else renders
+# ──────────────────────────────────────────────────────────────────────────────
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.text_input(
+        "Enter password", type="password",
+        on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("Incorrect password")
+    return False
+
+if not check_password():
+    st.stop()
+
 st.set_page_config(
     page_title="ARIA · Sales Intelligence",
     page_icon="◆",
