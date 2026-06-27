@@ -2,16 +2,12 @@ import streamlit as st
 if not st.session_state.get("password_correct", False):
     st.stop()
 
-import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-import os, sys, io, textwrap, datetime
+import os
+import requests
 
 from utils.data_processor import (
     get_salesperson_totals,
@@ -22,7 +18,6 @@ from utils.data_processor import (
     get_ytd_total,
     get_data_summary_for_ai,
 )
-from utils.groq_client import ask_groq
 
 st.set_page_config(
     page_title="ARIA · Dashboard",
@@ -31,246 +26,385 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ── Guard ──────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# GUARD
+# ─────────────────────────────────────────────────────────────────
 if "df" not in st.session_state:
-    st.warning("No dataset loaded. Please upload a file first.")
-    st.page_link("app.py", label="← Back to Upload", icon="⬅️")
+    st.warning("No dataset loaded.")
+    st.page_link("app.py", label="← Upload Data", icon="⬅️")
     st.stop()
 
 df       = st.session_state["df"]
 filename = st.session_state.get("filename", "dataset.xlsx")
 
-# ── CSS ────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# TRANSACTIONS DATA (from 2nd sheet, if present in the uploaded file)
+# ─────────────────────────────────────────────────────────────────
+tx_df = pd.DataFrame()
+if "uploaded_file_bytes" in st.session_state:
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(BytesIO(st.session_state["uploaded_file_bytes"]), data_only=True)
+        if "Transactions" in wb.sheetnames:
+            ws = wb["Transactions"]
+            rows = list(ws.iter_rows(values_only=True))
+            hdrs = rows[0]
+            tx_df = pd.DataFrame([dict(zip(hdrs, r)) for r in rows[1:] if any(v is not None for v in r)])
+    except Exception:
+        pass
+
+# ─────────────────────────────────────────────────────────────────
+# CHART THEME (consistent helper — avoids the duplicate-margin bug)
+# ─────────────────────────────────────────────────────────────────
+PLOT_BASE = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Inter, Manrope, sans-serif", color="#94A3B8", size=11),
+)
+BLUE_PAL = ["#3B82F6", "#06B6D4", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444", "#F97316", "#84CC16"]
+
+def style_fig(fig, height=300, margin=None, **kwargs):
+    """Apply the shared theme without ever colliding on duplicate kwargs."""
+    fig.update_layout(**PLOT_BASE, height=height, **kwargs)
+    fig.update_layout(margin=margin or dict(l=8, r=8, t=32, b=8))
+    return fig
+
+# ─────────────────────────────────────────────────────────────────
+# CSS
+# ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 *,*::before,*::after{box-sizing:border-box;}
 :root{
-  --bg-1:#02030A;--bg-2:#040712;--bg-3:#06091A;
-  --blue:#4F8CFF;--purple:#7B61FF;--cyan:#00D4FF;
-  --green:#00FFC6;--gold:#FFD166;--red:#FF6B6B;
-  --text-primary:#F4F7FC;--text-secondary:#AEB9D4;--text-muted:#6B7694;
-  --glass-border:rgba(255,255,255,0.06);--glass-bg:rgba(255,255,255,0.03);
+  --bg: #020510; --bg2: #040A1A; --bg3: #071020;
+  --surface: rgba(255,255,255,0.032); --surface2: rgba(255,255,255,0.055);
+  --border: rgba(255,255,255,0.072); --border2: rgba(255,255,255,0.12);
+  --blue: #3B82F6; --blue2: #60A5FA; --cyan: #06B6D4; --purple: #8B5CF6;
+  --green: #10B981; --gold: #F59E0B; --red: #EF4444; --orange: #F97316;
+  --txt1: #F1F5F9; --txt2: #94A3B8; --txt3: #475569;
 }
 html,body,.stApp{
-  background:radial-gradient(ellipse 120% 80% at 50% -10%,var(--bg-3) 0%,var(--bg-2) 45%,var(--bg-1) 100%) !important;
-  color:var(--text-secondary);font-family:'Manrope',sans-serif;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% -5%, rgba(59,130,246,0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 80% 100%, rgba(139,92,246,0.07) 0%, transparent 55%),
+    #020510 !important;
+  color: var(--txt2); font-family: 'Inter', sans-serif;
 }
-#MainMenu,footer,header{visibility:hidden;}
-.block-container{padding:5.5rem 3.5vw 3rem !important;max-width:100% !important;}
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding: 5.2rem 2.2vw 3rem !important; max-width: 100% !important; }
+
+/* topbar */
+#topbar{
+  position:fixed;top:0;left:0;right:0;z-index:200;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.72rem 2rem; background:rgba(2,5,16,0.82);
+  border-bottom:1px solid var(--border); backdrop-filter:blur(28px);
+}
+.tb-brand{display:flex;align-items:center;gap:.6rem;}
+.tb-mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#3B82F6,#8B5CF6 55%,#06B6D4);
+  display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:900;color:#fff;
+  box-shadow:0 0 18px rgba(59,130,246,.4);}
+.tb-name{font-size:.92rem;font-weight:800;color:var(--txt1);letter-spacing:-.3px;}
+.tb-sep{color:var(--border2);margin:0 .3rem;}
+.tb-page{font-size:.82rem;color:var(--txt2);font-weight:500;}
+.tb-pills{display:flex;gap:.5rem;align-items:center;}
+.tb-pill{font-family:'JetBrains Mono',monospace;font-size:.58rem;padding:3px 10px;border-radius:6px;
+  background:var(--surface);border:1px solid var(--border);color:var(--txt3);letter-spacing:.4px;}
+.tb-live{display:flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:.58rem;
+  padding:3px 10px;border-radius:6px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);color:var(--green);}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:lpulse 2s infinite;}
+@keyframes lpulse{0%,100%{opacity:1;}50%{opacity:.25;}}
 
 /* sidebar */
-section[data-testid="stSidebar"]{background:rgba(4,7,18,0.97) !important;border-right:1px solid var(--glass-border);}
-section[data-testid="stSidebar"] *{color:var(--text-secondary) !important;}
-.sb-section{margin-bottom:1.2rem;}
-.sb-hdr{font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;padding:0.5rem 0 0.3rem;border-bottom:1px solid var(--glass-border);margin-bottom:0.6rem;}
-.sb-stat{display:flex;justify-content:space-between;align-items:center;font-size:0.78rem;padding:0.22rem 0;}
-.sb-stat .lbl{color:var(--text-muted);}
-.sb-stat .val{color:var(--text-primary);font-weight:600;}
-.sb-badge{display:inline-flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:0.62rem;padding:3px 9px;border-radius:99px;}
-.sb-badge.on{background:rgba(0,255,198,0.08);border:1px solid rgba(0,255,198,0.25);color:var(--green);}
-.sb-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s ease infinite;}
-@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+section[data-testid="stSidebar"]{background:rgba(4,10,26,.96) !important;border-right:1px solid var(--border) !important;backdrop-filter:blur(20px);}
+section[data-testid="stSidebar"] *{color:var(--txt2) !important;}
+.sb-hdr{font-family:'JetBrains Mono',monospace;font-size:.56rem;letter-spacing:2.5px;text-transform:uppercase;
+  color:var(--blue2) !important;padding:.55rem 0 .25rem;margin-bottom:.4rem;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;}
+.sb-hdr::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(59,130,246,.2),transparent);}
+.sb-stat{display:flex;justify-content:space-between;align-items:center;font-size:.76rem;padding:.2rem 0;}
+.sb-stat .lbl{color:var(--txt3);} .sb-stat .val{color:var(--txt1);font-weight:600;}
+.sb-chip{display:inline-flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:.58rem;
+  padding:2px 9px;border-radius:99px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.22);color:var(--green);}
+.chip-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green);animation:lpulse 2s infinite;}
 
-/* top bar */
-#dash-topbar{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0.85rem 2.4rem;background:rgba(2,3,10,0.75);border-bottom:1px solid var(--glass-border);backdrop-filter:blur(24px);}
-.tb-brand{display:flex;align-items:center;gap:0.7rem;}
-.tb-mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--purple) 60%,var(--cyan));display:flex;align-items:center;justify-content:center;font-size:0.78rem;font-weight:700;color:#fff;box-shadow:0 0 16px rgba(79,140,255,0.4);}
-.tb-name{font-size:0.9rem;font-weight:700;color:var(--text-primary);}
-.tb-tag{font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--text-muted);background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);border-radius:5px;padding:2px 7px;}
-.tb-right{display:flex;align-items:center;gap:1.4rem;}
-.tb-pill{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;}
-.tb-dot{width:5px;height:5px;border-radius:50%;animation:pulse 2.4s ease infinite;}
-.tb-dot.g{background:var(--green);box-shadow:0 0 5px var(--green);}
-.tb-dot.b{background:var(--blue);box-shadow:0 0 5px var(--blue);animation-delay:.5s;}
+/* section header w/ helper subtitle — this is the core "easy to understand" pattern */
+.sec-wrap{ margin: 2.4rem 0 1.1rem; }
+.sec-hdr{display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:.62rem;
+  color:var(--blue2);letter-spacing:2.5px;text-transform:uppercase;}
+.sec-hdr .ln{flex:1;height:1px;background:linear-gradient(90deg,rgba(59,130,246,.25),transparent);}
+.sec-hdr .badge{font-size:.5rem;padding:2px 7px;border-radius:4px;background:rgba(59,130,246,.1);
+  border:1px solid rgba(59,130,246,.2);color:var(--blue2);letter-spacing:1px;}
+.sec-sub{font-size:.82rem;color:var(--txt3);margin-top:.35rem;font-weight:400;line-height:1.5;max-width:780px;}
 
-/* section headers */
-.sec-hdr{display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:var(--cyan);letter-spacing:2.5px;text-transform:uppercase;margin:2.2rem 0 1rem;}
-.sec-hdr .ln{flex:1;height:1px;background:linear-gradient(90deg,var(--glass-border),transparent);}
+/* hero banner */
+#hero-banner{border-radius:20px;border:1px solid rgba(59,130,246,.18);
+  background:linear-gradient(120deg,rgba(59,130,246,.08) 0%,rgba(139,92,246,.05) 50%,rgba(6,182,212,.05) 100%);
+  backdrop-filter:blur(18px);padding:1.6rem 1.8rem 1.4rem;position:relative;overflow:hidden;margin-bottom:1.6rem;}
+#hero-banner::before{content:'';position:absolute;top:-60px;right:-40px;width:320px;height:320px;border-radius:50%;
+  background:radial-gradient(circle,rgba(59,130,246,.13),transparent 70%);pointer-events:none;}
+.hero-top{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:1;}
+.hero-eyebrow{font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--green);letter-spacing:2.5px;
+  text-transform:uppercase;display:flex;align-items:center;gap:7px;margin-bottom:.55rem;}
+.hero-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:lpulse 2s infinite;}
+.hero-title{font-size:1.4rem;font-weight:800;color:var(--txt1);margin-bottom:.3rem;}
+.hero-desc{font-size:.84rem;color:var(--txt3);max-width:540px;line-height:1.55;}
+.health-badge{font-family:'JetBrains Mono',monospace;font-size:.68rem;padding:7px 16px;border-radius:99px;
+  white-space:nowrap;font-weight:700;letter-spacing:.4px;}
+.health-good{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.3);}
+.health-warn{background:rgba(245,158,11,.1);color:var(--gold);border:1px solid rgba(245,158,11,.3);}
+.health-bad{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);}
+.hero-meta-row{display:flex;flex-wrap:wrap;gap:.6rem;border-top:1px solid var(--border);padding-top:1rem;
+  margin-top:1.1rem;position:relative;z-index:1;}
+.hmeta{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:.6rem;
+  color:var(--txt3);background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:8px;padding:4px 11px;}
+.hmeta b{color:var(--txt1);font-weight:700;}
 
-/* intelligence banner */
-#banner{border-radius:20px;border:1px solid var(--glass-border);background:linear-gradient(120deg,rgba(79,140,255,0.07),rgba(123,97,255,0.05) 50%,rgba(0,212,255,0.04));backdrop-filter:blur(20px);padding:1.5rem 1.8rem;position:relative;overflow:hidden;}
-#banner::before{content:'';position:absolute;top:-50%;right:-8%;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(79,140,255,0.18),transparent 70%);filter:blur(10px);}
-.bn-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.1rem;position:relative;z-index:1;}
-.bn-title{font-size:1.1rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px;}
-.bn-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite;}
-.bn-sub{font-size:0.76rem;color:var(--text-muted);margin-top:0.15rem;}
-.bn-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:0;position:relative;z-index:1;}
-.bcell{padding:0.35rem 0.9rem;border-left:1px solid var(--glass-border);}
-.bcell:first-child{border-left:none;padding-left:0;}
-.bcell .lab{font-family:'JetBrains Mono',monospace;font-size:0.52rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.1px;margin-bottom:0.25rem;}
-.bcell .num{font-size:1.35rem;font-weight:800;color:var(--text-primary);line-height:1.1;}
-.bcell .num.cy{color:var(--cyan);}.bcell .num.gr{color:var(--green);}.bcell .num.go{color:var(--gold);}.bcell .num.pu{color:var(--purple);}.bcell .num.re{color:var(--red);}
-.bcell .delta{font-size:0.68rem;margin-top:0.2rem;font-weight:600;}
-.delta.up{color:var(--green);}.delta.dn{color:var(--red);}
-
-/* kpi cards */
-.kpi{border-radius:16px;border:1px solid var(--glass-border);background:var(--glass-bg);backdrop-filter:blur(14px);padding:1.1rem 1.3rem;transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease;}
-.kpi:hover{transform:translateY(-4px);border-color:rgba(79,140,255,0.3);box-shadow:0 8px 32px rgba(79,140,255,0.08);}
-.kpi-lab{font-family:'JetBrains Mono',monospace;font-size:0.56rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.3px;margin-bottom:0.4rem;}
-.kpi-val{font-size:1.45rem;font-weight:800;}
-.kpi-val.cy{color:var(--cyan);}.kpi-val.gr{color:var(--green);}.kpi-val.go{color:var(--gold);}.kpi-val.pu{color:var(--purple);}.kpi-val.re{color:var(--red);}
-.kpi-foot{font-size:0.7rem;color:var(--text-muted);margin-top:0.35rem;}
-.kpi-delta{font-size:0.72rem;font-weight:600;margin-top:0.3rem;}
+/* KPI cards */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.8rem;margin-bottom:.8rem;}
+.kpi{border-radius:15px;border:1px solid var(--border);background:var(--surface);backdrop-filter:blur(14px);
+  padding:1.05rem 1.2rem;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:15px 15px 0 0;opacity:.6;}
+.kpi.blue::before{background:linear-gradient(90deg,var(--blue),var(--cyan));}
+.kpi.cyan::before{background:linear-gradient(90deg,var(--cyan),var(--blue));}
+.kpi.green::before{background:linear-gradient(90deg,var(--green),var(--cyan));}
+.kpi.gold::before{background:linear-gradient(90deg,var(--gold),var(--orange));}
+.kpi.purple::before{background:linear-gradient(90deg,var(--purple),var(--blue));}
+.kpi.red::before{background:linear-gradient(90deg,var(--red),var(--orange));}
+.kpi:hover{transform:translateY(-3px);border-color:var(--border2);box-shadow:0 8px 28px rgba(59,130,246,.1);}
+.kpi-top{display:flex;justify-content:space-between;align-items:flex-start;}
+.kpi-icon{font-size:1.15rem;}
+.kpi-help{font-size:.6rem;color:var(--txt3);cursor:help;border:1px solid var(--border);border-radius:50%;
+  width:16px;height:16px;display:flex;align-items:center;justify-content:center;}
+.kpi-lab{font-family:'JetBrains Mono',monospace;font-size:.53rem;color:var(--txt3);text-transform:uppercase;
+  letter-spacing:1.2px;margin:.5rem 0 .3rem;}
+.kpi-val{font-size:1.5rem;font-weight:800;line-height:1.1;margin-bottom:.25rem;}
+.kpi-val.blue{color:var(--blue2);} .kpi-val.cyan{color:var(--cyan);} .kpi-val.green{color:var(--green);}
+.kpi-val.gold{color:var(--gold);} .kpi-val.purple{color:var(--purple);} .kpi-val.red{color:var(--red);}
+.kpi-foot{font-size:.69rem;color:var(--txt3);}
+.kpi-delta{font-size:.69rem;font-weight:700;margin-top:.25rem;display:inline-flex;align-items:center;gap:3px;}
+.d-up{color:var(--green);} .d-dn{color:var(--red);}
 
 /* glass card */
-.gcard{border-radius:18px;border:1px solid var(--glass-border);background:var(--glass-bg);backdrop-filter:blur(14px);padding:1.3rem 1.4rem;}
-.gcard-title{font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:0.8rem;}
+.gc{border-radius:17px;border:1px solid var(--border);background:var(--surface);backdrop-filter:blur(14px);
+  padding:1.2rem 1.3rem;height:100%;}
+.gc-title{font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--txt3);text-transform:uppercase;
+  letter-spacing:1.5px;margin-bottom:.85rem;display:flex;align-items:center;gap:6px;}
+.gc-title .dot{width:5px;height:5px;border-radius:50%;background:var(--blue);flex-shrink:0;}
+.gc-note{font-size:.72rem;color:var(--txt3);margin-top:.6rem;line-height:1.5;border-top:1px solid rgba(255,255,255,.04);padding-top:.6rem;}
 
 /* leaderboard */
-.lb-row{display:flex;align-items:center;gap:10px;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.03);}
+.lb-row{display:flex;align-items:center;gap:9px;padding:.45rem 0;border-bottom:1px solid rgba(255,255,255,.035);}
 .lb-row:last-child{border-bottom:none;}
-.lb-rank{width:22px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--text-muted);flex-shrink:0;}
-.lb-rank.r1{color:var(--gold);}.lb-rank.r2{color:var(--cyan);}.lb-rank.r3{color:var(--purple);}
-.lb-info{flex:1;}
-.lb-top{display:flex;justify-content:space-between;align-items:center;}
-.lb-name{font-size:0.83rem;color:var(--text-secondary);}
-.lb-cat{font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--text-muted);}
-.lb-val{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text-primary);font-weight:700;}
-.lb-bar{height:3px;border-radius:99px;background:rgba(255,255,255,0.05);margin-top:4px;overflow:hidden;}
+.lb-rank{width:22px;font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--txt3);flex-shrink:0;text-align:center;}
+.lb-rank.r1{color:var(--gold);font-weight:700;} .lb-rank.r2{color:var(--txt2);font-weight:600;} .lb-rank.r3{color:var(--orange);font-weight:600;}
+.lb-av{width:29px;height:29px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-size:.63rem;font-weight:700;background:rgba(59,130,246,.15);color:var(--blue2);border:1px solid rgba(59,130,246,.22);}
+.lb-av.gold{background:rgba(245,158,11,.12);color:var(--gold);border-color:rgba(245,158,11,.22);}
+.lb-info{flex:1;min-width:0;} .lb-top{display:flex;justify-content:space-between;align-items:center;}
+.lb-name{font-size:.81rem;color:var(--txt2);font-weight:500;} .lb-cat{font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--txt3);}
+.lb-val{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--txt1);font-weight:700;}
+.lb-bar{height:2.5px;border-radius:99px;background:rgba(255,255,255,.05);margin-top:4px;overflow:hidden;}
 .lb-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--cyan));}
+.consist-badge{font-family:'JetBrains Mono',monospace;font-size:.48rem;padding:1px 7px;border-radius:5px;margin-left:.4rem;}
+.consist-reliable{background:rgba(16,185,129,.1);color:var(--green);} .consist-watch{background:rgba(245,158,11,.1);color:var(--gold);}
+
+/* channel rows */
+.ch-row{display:flex;align-items:center;justify-content:space-between;padding:.42rem 0;border-bottom:1px solid rgba(255,255,255,.035);}
+.ch-row:last-child{border-bottom:none;}
+.ch-name{font-size:.8rem;color:var(--txt2);} .ch-sub{font-size:.62rem;color:var(--txt3);display:block;}
+.ch-bar-wrap{flex:1;margin:0 .8rem;height:5px;border-radius:99px;background:rgba(255,255,255,.05);overflow:hidden;}
+.ch-bar{height:100%;border-radius:99px;}
+.ch-val{font-family:'JetBrains Mono',monospace;font-size:.73rem;color:var(--txt1);font-weight:600;white-space:nowrap;}
+.ch-pct{font-size:.62rem;color:var(--txt3);margin-left:.4rem;}
 
 /* alerts */
-.alert-pill{display:flex;align-items:center;gap:8px;padding:0.4rem 0.75rem;border-radius:10px;background:rgba(255,107,107,0.06);border:1px solid rgba(255,107,107,0.18);margin-bottom:0.35rem;font-size:0.78rem;color:var(--text-secondary);}
-.alert-dot{width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 6px var(--red);flex-shrink:0;}
-.ok-pill{font-size:0.8rem;color:var(--green);display:flex;align-items:center;gap:7px;}
+.alert-card{display:flex;align-items:center;gap:8px;padding:.4rem .75rem;border-radius:11px;
+  background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.15);margin-bottom:.32rem;font-size:.77rem;color:var(--txt2);}
+.alert-card .adot{width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 5px var(--red);flex-shrink:0;}
+.ok-card{display:flex;align-items:center;gap:6px;font-size:.79rem;color:var(--green);padding:.3rem 0;}
 
-/* category health */
-.health-row{display:flex;align-items:center;justify-content:space-between;padding:0.45rem 0;border-bottom:1px solid rgba(255,255,255,0.03);}
-.health-row:last-child{border-bottom:none;}
-.health-name{font-size:0.82rem;color:var(--text-secondary);}
-.health-val{font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--text-primary);font-weight:600;}
-.hbadge{font-family:'JetBrains Mono',monospace;font-size:0.58rem;padding:2px 8px;border-radius:99px;}
-.hbadge.strong{background:rgba(0,255,198,0.1);color:var(--green);border:1px solid rgba(0,255,198,0.25);}
-.hbadge.moderate{background:rgba(255,209,102,0.1);color:var(--gold);border:1px solid rgba(255,209,102,0.25);}
-.hbadge.low{background:rgba(255,107,107,0.1);color:var(--red);border:1px solid rgba(255,107,107,0.25);}
+/* health badges */
+.hbadge{font-family:'JetBrains Mono',monospace;font-size:.55rem;padding:2px 8px;border-radius:6px;}
+.hbadge.strong{background:rgba(16,185,129,.08);color:var(--green);border:1px solid rgba(16,185,129,.2);}
+.hbadge.moderate{background:rgba(245,158,11,.08);color:var(--gold);border:1px solid rgba(245,158,11,.2);}
+.hbadge.low{background:rgba(239,68,68,.08);color:var(--red);border:1px solid rgba(239,68,68,.2);}
 
-/* progress bar */
-.prog-track{height:10px;border-radius:99px;background:rgba(255,255,255,0.05);overflow:hidden;margin:0.6rem 0 0.35rem;}
+/* progress */
+.prog-track{height:9px;border-radius:99px;background:rgba(255,255,255,.05);overflow:hidden;margin:.6rem 0 .35rem;}
 .prog-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--purple),var(--cyan));}
-.prog-cap{display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);}
+.prog-cap{display:flex;justify-content:space-between;font-size:.7rem;color:var(--txt3);}
 
-/* day comparison table */
-.day-row{display:flex;justify-content:space-between;align-items:center;padding:0.32rem 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:0.8rem;}
-.day-row:last-child{border-bottom:none;}
+/* AI insight card */
+.ai-card{border-radius:18px;border:1px solid rgba(139,92,246,.22);
+  background:linear-gradient(135deg,rgba(139,92,246,.07),rgba(59,130,246,.04));padding:1.4rem 1.5rem;position:relative;overflow:hidden;}
+.ai-card::before{content:'';position:absolute;top:-50px;right:-30px;width:220px;height:220px;border-radius:50%;
+  background:radial-gradient(circle,rgba(139,92,246,.12),transparent 70%);pointer-events:none;}
+.ai-title{font-size:1rem;font-weight:700;color:var(--txt1);display:flex;align-items:center;gap:8px;margin-bottom:.8rem;position:relative;z-index:1;}
+.ai-badge{font-family:'JetBrains Mono',monospace;font-size:.55rem;padding:2px 9px;border-radius:99px;
+  background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);color:var(--purple);margin-left:auto;}
+.ai-body{font-size:.86rem;color:var(--txt2);line-height:1.85;white-space:pre-wrap;position:relative;z-index:1;}
+.ai-point{display:flex;gap:9px;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:flex-start;}
+.ai-point:last-child{border-bottom:none;}
+.ai-point-icon{font-size:.9rem;flex-shrink:0;margin-top:1px;}
 
-/* chart toggle */
-div[data-testid="stRadio"] > div{display:flex;gap:0.5rem;flex-wrap:wrap;}
-div[data-testid="stRadio"] label{background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:8px;padding:4px 12px;font-size:0.72rem;cursor:pointer;transition:all .2s;}
-div[data-testid="stRadio"] label:hover{border-color:var(--blue);}
+/* party / followup */
+.party-row{display:flex;align-items:center;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.035);}
+.party-row:last-child{border-bottom:none;}
+.party-name{font-size:.8rem;color:var(--txt2);} .party-val{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--txt1);font-weight:600;}
+.party-due{font-size:.63rem;color:var(--red);}
+.fu-row{display:flex;align-items:center;gap:9px;padding:.4rem .68rem;border-radius:10px;background:rgba(245,158,11,.04);
+  border:1px solid rgba(245,158,11,.12);margin-bottom:.3rem;font-size:.77rem;color:var(--txt2);}
+.fu-dot{width:5px;height:5px;border-radius:50%;background:var(--gold);flex-shrink:0;}
+.fu-inv{font-family:'JetBrains Mono',monospace;font-size:.65rem;color:var(--txt3);}
 
-/* buttons */
-.stButton button,.stDownloadButton button{background:linear-gradient(135deg,rgba(79,140,255,0.12),rgba(123,97,255,0.1)) !important;border:1px solid rgba(79,140,255,0.28) !important;color:var(--text-primary) !important;border-radius:10px !important;font-family:'Manrope',sans-serif !important;font-weight:600 !important;transition:all .25s ease !important;}
-.stButton button:hover,.stDownloadButton button:hover{border-color:var(--cyan) !important;box-shadow:0 0 20px rgba(0,212,255,0.12) !important;transform:translateY(-1px) !important;}
+/* coll */
+.coll-row{display:flex;justify-content:space-between;align-items:center;padding:.38rem 0;border-bottom:1px solid rgba(255,255,255,.035);}
+.coll-row:last-child{border-bottom:none;}
+.coll-lbl{font-size:.78rem;color:var(--txt3);} .coll-val{font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--txt1);font-weight:600;}
+
+/* table & buttons */
+div[data-testid="stDataFrame"]{border-radius:13px;overflow:hidden;border:1px solid var(--border);}
+.stButton button,.stDownloadButton button{
+  background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(139,92,246,.09)) !important;
+  border:1px solid rgba(59,130,246,.25) !important;color:var(--txt1) !important;border-radius:11px !important;
+  font-family:'Inter',sans-serif !important;font-weight:600 !important;transition:all .22s ease !important;}
+.stButton button:hover,.stDownloadButton button:hover{border-color:var(--cyan) !important;
+  box-shadow:0 0 18px rgba(6,182,212,.12) !important;transform:translateY(-1px) !important;}
 .stButton button[kind="primary"]{background:linear-gradient(135deg,var(--blue),var(--purple)) !important;border:none !important;}
 
-/* report button special */
-.rpt-btn .stButton button{background:linear-gradient(135deg,rgba(255,209,102,0.15),rgba(255,107,107,0.1)) !important;border:1px solid rgba(255,209,102,0.35) !important;font-size:1rem !important;padding:0.8rem !important;}
-
-/* dataframe */
-div[data-testid="stDataFrame"]{border-radius:14px;overflow:hidden;border:1px solid var(--glass-border);}
-
-/* selectbox / multiselect / slider */
+div[data-testid="stRadio"]>div{display:flex;gap:.4rem;flex-wrap:wrap;}
+div[data-testid="stRadio"] label{background:var(--surface);border:1px solid var(--border);border-radius:9px;
+  padding:3px 13px;font-size:.71rem;cursor:pointer;transition:all .18s;}
+div[data-testid="stRadio"] label:hover{border-color:var(--blue);}
 div[data-testid="stSelectbox"] label,div[data-testid="stMultiSelect"] label,div[data-testid="stSlider"] label{
-  color:var(--text-muted) !important;font-family:'JetBrains Mono',monospace !important;font-size:0.62rem !important;text-transform:uppercase !important;letter-spacing:1px !important;}
+  color:var(--txt3) !important;font-family:'JetBrains Mono',monospace !important;font-size:.58rem !important;
+  text-transform:uppercase !important;letter-spacing:1px !important;}
 
-/* AI summary card */
-.ai-card{border-radius:18px;border:1px solid rgba(123,97,255,0.25);background:linear-gradient(135deg,rgba(123,97,255,0.06),rgba(79,140,255,0.04));backdrop-filter:blur(16px);padding:1.5rem 1.6rem;}
-.ai-title{font-size:1rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:9px;margin-bottom:0.8rem;}
-.ai-body{font-size:0.88rem;color:var(--text-secondary);line-height:1.75;white-space:pre-wrap;}
+/* footer */
+.aria-footer{text-align:center;margin-top:2.5rem;padding-top:1.4rem;border-top:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--txt3);letter-spacing:1px;}
+
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(59,130,246,.3);border-radius:99px;}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Top bar ────────────────────────────────────────────────────────────────────
+
+def section_header(title, subtitle, badge=None):
+    """Consistent section header with a one-line plain-English explanation underneath."""
+    badge_html = f'<span class="badge">{badge}</span>' if badge else ""
+    st.markdown(f"""
+    <div class="sec-wrap">
+      <div class="sec-hdr">◈ {title}{badge_html}<div class="ln"></div></div>
+      <div class="sec-sub">{subtitle}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────
+# TOPBAR
+# ─────────────────────────────────────────────────────────────────
 st.markdown(f"""
-<div id="dash-topbar">
+<div id="topbar">
   <div class="tb-brand">
     <div class="tb-mark">A</div>
     <div class="tb-name">ARIA</div>
-    <div class="tb-tag">Sales Intelligence · Dashboard</div>
-    <div class="tb-tag">{filename}</div>
+    <div class="tb-sep">·</div>
+    <div class="tb-page">Sales Intelligence Dashboard</div>
   </div>
-  <div class="tb-right">
-    <div class="tb-pill"><div class="tb-dot g"></div>Live Data</div>
-    <div class="tb-pill"><div class="tb-dot b"></div>Neural Engine</div>
+  <div class="tb-pills">
+    <div class="tb-pill">{filename}</div>
+    <div class="tb-pill">LLaMA 3.3-70B</div>
+    <div class="tb-live"><div class="live-dot"></div>Live</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-
-    st.markdown('<div class="sb-hdr">System</div>', unsafe_allow_html=True)
-    st.markdown('<span class="sb-badge on"><span class="sb-dot"></span>All Systems Online</span>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div style="margin-top:0.7rem;">
-      <div class="sb-stat"><span class="lbl">File</span><span class="val" style="font-size:0.7rem;">{filename}</span></div>
-      <div class="sb-stat"><span class="lbl">Rows</span><span class="val">{len(df)}</span></div>
-      <div class="sb-stat"><span class="lbl">Columns</span><span class="val">{len(df.columns)}</span></div>
-      <div class="sb-stat"><span class="lbl">AI Model</span><span class="val">LLaMA 3.3-70B</span></div>
+    st.markdown("""
+    <div style="padding:.9rem .5rem .4rem;border-bottom:1px solid var(--border);margin-bottom:.6rem;">
+      <div style="display:flex;align-items:center;gap:.5rem;">
+        <div style="width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#3B82F6,#8B5CF6 55%,#06B6D4);display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:900;color:#fff;">A</div>
+        <div>
+          <div style="font-size:.88rem;font-weight:800;color:#F1F5F9;">ARIA Dashboard</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:.5rem;color:#475569;">v5.0 · Neural Glass</div>
+        </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="sb-hdr" style="margin-top:1.2rem;">Date Period</div>', unsafe_allow_html=True)
-    n_date_cols = max(len(df.columns) - 1, 1)
-    date_range = st.slider("Day range", min_value=1, max_value=n_date_cols, value=(1, n_date_cols), label_visibility="collapsed")
+    st.markdown('<div class="sb-hdr">System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sb-chip"><div class="chip-dot"></div>All Systems Online</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="margin-top:.6rem;">
+      <div class="sb-stat"><span class="lbl">File</span><span class="val" style="font-size:.65rem;">{filename}</span></div>
+      <div class="sb-stat"><span class="lbl">Rows</span><span class="val">{len(df)}</span></div>
+      <div class="sb-stat"><span class="lbl">Cols</span><span class="val">{len(df.columns)}</span></div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Quick period presets
-    preset = st.selectbox("Quick Select", ["Custom", "Last 7 Days", "Last 14 Days", "Last 30 Days", "Full Range"], label_visibility="collapsed")
+    st.markdown('<div class="sb-hdr" style="margin-top:.9rem;">Date Range</div>', unsafe_allow_html=True)
+    n_date_cols = max(len(df.columns) - 1, 1)
+    preset = st.selectbox("Quick Select", ["Full Range", "Last 7 Days", "Last 14 Days", "This Week"],
+                           label_visibility="collapsed",
+                           help="Choose how much of the report to analyze. 'Full Range' uses every day in the file.")
     if preset == "Last 7 Days":
         date_range = (max(1, n_date_cols - 6), n_date_cols)
     elif preset == "Last 14 Days":
         date_range = (max(1, n_date_cols - 13), n_date_cols)
-    elif preset == "Last 30 Days":
-        date_range = (max(1, n_date_cols - 29), n_date_cols)
-    elif preset == "Full Range":
+    elif preset == "This Week":
+        date_range = (max(1, n_date_cols - 4), n_date_cols)
+    else:
         date_range = (1, n_date_cols)
 
     lo, hi = date_range
-    st.markdown(f"""
-    <div class="sb-stat"><span class="lbl">Period</span><span class="val">Day {lo} → Day {hi}</span></div>
-    <div class="sb-stat"><span class="lbl">Days Selected</span><span class="val">{hi - lo + 1}</span></div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<div class="sb-stat"><span class="lbl">Period</span><span class="val">Day {lo} – {hi}</span></div>
+    <div class="sb-stat"><span class="lbl">Days</span><span class="val">{hi-lo+1}</span></div>""", unsafe_allow_html=True)
 
-    st.markdown('<div class="sb-hdr" style="margin-top:1.2rem;">Filters</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="sb-hdr" style="margin-top:.9rem;">Filters</div>', unsafe_allow_html=True)
     all_people_df = get_salesperson_totals(df)
-    all_names = all_people_df["Salesperson"].tolist() if not all_people_df.empty else []
-
-    # Category filter
     all_cats = sorted(all_people_df["Category"].unique().tolist()) if not all_people_df.empty else []
     sel_cats = st.multiselect("Category", options=all_cats, default=all_cats, label_visibility="collapsed",
-                               placeholder="Filter by category…")
+                               placeholder="Filter categories…",
+                               help="Show only the sales channels you pick (e.g. just ADS or just Office Kerala).")
+    avail_names = all_people_df[all_people_df["Category"].isin(sel_cats)]["Salesperson"].tolist() if sel_cats else []
+    sel_people = st.multiselect("Salesperson", options=avail_names, default=avail_names,
+                                 label_visibility="collapsed", placeholder="Filter people…",
+                                 help="Narrow the dashboard down to specific salespeople.")
 
-    # Salesperson filter — respects category selection
-    if sel_cats:
-        available_names = all_people_df[all_people_df["Category"].isin(sel_cats)]["Salesperson"].tolist()
-    else:
-        available_names = all_names
-    selected_people = st.multiselect("Salesperson", options=available_names, default=available_names,
-                                      label_visibility="collapsed", placeholder="Filter by person…")
+    st.markdown('<div class="sb-hdr" style="margin-top:.9rem;">Target</div>', unsafe_allow_html=True)
+    monthly_target = st.number_input("Monthly Target (₹)", min_value=0, value=2_000_000, step=100_000,
+                                      label_visibility="collapsed",
+                                      help="Your sales goal for the month — used to calculate progress %.")
 
-    st.markdown('<div class="sb-hdr" style="margin-top:1.2rem;">Display</div>', unsafe_allow_html=True)
-    show_raw = st.checkbox("Show raw data table", value=True)
-    show_week = st.checkbox("Show weekly breakdown", value=True)
-    leaderboard_n = st.slider("Leaderboard top N", 5, 20, 10, label_visibility="collapsed")
+    st.markdown('<div class="sb-hdr" style="margin-top:.9rem;">Display</div>', unsafe_allow_html=True)
+    show_raw      = st.checkbox("Show data tables", value=True)
+    show_tx       = st.checkbox("Show transactions", value=True)
+    leaderboard_n = st.slider("Leaderboard size", 5, 25, 10, label_visibility="collapsed")
 
-    st.markdown('<div class="sb-hdr" style="margin-top:1.2rem;">Target</div>', unsafe_allow_html=True)
-    monthly_target = st.number_input("Monthly Target (₹)", min_value=0, value=2000000, step=100000,
-                                      label_visibility="collapsed")
-
-    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:.4rem;'></div>", unsafe_allow_html=True)
     if st.button("← New Upload", use_container_width=True):
         st.switch_page("app.py")
+    if st.button("AI Copilot →", use_container_width=True, type="primary"):
+        st.switch_page("pages/2_AI_Chat.py")
 
-# ── Apply filters ──────────────────────────────────────────────────────────────
-date_cols_all     = df.columns[1:]
-selected_date_cols = date_cols_all[lo - 1 : hi]
+# ─────────────────────────────────────────────────────────────────
+# DATA COMPUTATION
+# ─────────────────────────────────────────────────────────────────
+date_cols_all      = df.columns[1:]
+selected_date_cols = date_cols_all[lo - 1: hi]
 filtered_df        = df[[df.columns[0]] + list(selected_date_cols)].copy()
 
 person_totals = get_salesperson_totals(filtered_df)
-if selected_people:
-    person_totals = person_totals[person_totals["Salesperson"].isin(selected_people)]
+if sel_people:
+    person_totals = person_totals[person_totals["Salesperson"].isin(sel_people)]
 if sel_cats:
     person_totals = person_totals[person_totals["Category"].isin(sel_cats)]
 
@@ -283,716 +417,659 @@ real_ytd     = get_ytd_total(df)
 total_sales   = float(person_totals["Total"].sum()) if not person_totals.empty else 0.0
 avg_daily     = float(daily_totals.mean())          if len(daily_totals) else 0.0
 n_active      = int((person_totals["Total"] > 0).sum()) if not person_totals.empty else 0
-top_performer = person_totals.iloc[0]               if not person_totals.empty else None
+top_performer = person_totals.iloc[0] if not person_totals.empty else None
 
-today_val     = float(daily_totals.iloc[-1])  if len(daily_totals) >= 1 else 0.0
-yest_val      = float(daily_totals.iloc[-2])  if len(daily_totals) >= 2 else 0.0
-day_chg_pct   = ((today_val - yest_val) / yest_val * 100) if yest_val else 0.0
+today_val   = float(daily_totals.iloc[-1]) if len(daily_totals) >= 1 else 0.0
+yest_val    = float(daily_totals.iloc[-2]) if len(daily_totals) >= 2 else 0.0
+day_chg_pct = ((today_val - yest_val) / yest_val * 100) if yest_val else 0.0
 
-week_this     = float(daily_totals.iloc[-7:].sum())  if len(daily_totals) >= 7  else float(daily_totals.sum())
-week_prev     = float(daily_totals.iloc[-14:-7].sum()) if len(daily_totals) >= 14 else 0.0
-week_chg_pct  = ((week_this - week_prev) / week_prev * 100) if week_prev else 0.0
-
-PLOT = dict(
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Manrope, sans-serif", color="#AEB9D4"),
-    margin=dict(l=10, r=10, t=35, b=10),
-)
-
-# ── Intelligence Banner ────────────────────────────────────────────────────────
-d_cls   = "up" if day_chg_pct  >= 0 else "dn"
-d_arrow = "▲"  if day_chg_pct  >= 0 else "▼"
-w_cls   = "up" if week_chg_pct >= 0 else "dn"
-w_arrow = "▲"  if week_chg_pct >= 0 else "▼"
-tp_name = top_performer["Salesperson"] if top_performer is not None else "—"
-
-st.markdown(f"""
-<div id="banner">
-  <div class="bn-top">
-    <div>
-      <div class="bn-title"><div class="bn-dot"></div>Intelligence Summary</div>
-      <div class="bn-sub">Auto-generated overview · Day {lo} – Day {hi} · {hi-lo+1} days selected</div>
-    </div>
-  </div>
-  <div class="bn-grid">
-    <div class="bcell"><div class="lab">Total Sales</div><div class="num cy">₹{total_sales:,.0f}</div></div>
-    <div class="bcell"><div class="lab">Avg / Day</div><div class="num gr">₹{avg_daily:,.0f}</div></div>
-    <div class="bcell"><div class="lab">Top Performer</div><div class="num go" style="font-size:1.05rem;">{tp_name}</div></div>
-    <div class="bcell"><div class="lab">Active Sellers</div><div class="num pu">{n_active}</div></div>
-    <div class="bcell"><div class="lab">Today vs Yesterday</div><div class="num" style="font-size:1.05rem;">₹{today_val:,.0f}</div><div class="delta {d_cls}">{d_arrow} {abs(day_chg_pct):.1f}%</div></div>
-    <div class="bcell"><div class="lab">This Week</div><div class="num" style="font-size:1.05rem;">₹{week_this:,.0f}</div><div class="delta {w_cls}">{w_arrow} {abs(week_chg_pct):.1f}%</div></div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# ── KPI Row (8 cards) ──────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Key Metrics<div class="ln"></div></div>', unsafe_allow_html=True)
+week_this    = float(daily_totals.iloc[-7:].sum())    if len(daily_totals) >= 7  else float(daily_totals.sum())
+week_prev    = float(daily_totals.iloc[-14:-7].sum()) if len(daily_totals) >= 14 else 0.0
+week_chg_pct = ((week_this - week_prev) / week_prev * 100) if week_prev else 0.0
 
 progress_pct = min(real_mtd / monthly_target * 100, 100) if monthly_target else 0
 best_idx     = int(daily_totals.values.argmax()) if len(daily_totals) else 0
 worst_idx    = int(daily_totals.values.argmin()) if len(daily_totals) else 0
-n_zero_days  = int((daily_totals == 0).sum())
 
-k1, k2, k3, k4 = st.columns(4)
-with k1:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Total Sales</div><div class="kpi-val cy">₹{total_sales:,.0f}</div><div class="kpi-foot">Period: Day {lo}–{hi}</div></div>""", unsafe_allow_html=True)
-with k2:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Month To Date</div><div class="kpi-val gr">₹{real_mtd:,.0f}</div><div class="kpi-foot">{progress_pct:.1f}% of target</div></div>""", unsafe_allow_html=True)
-with k3:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Year To Date</div><div class="kpi-val go">₹{real_ytd:,.0f}</div><div class="kpi-foot">Cumulative YTD</div></div>""", unsafe_allow_html=True)
-with k4:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Daily Average</div><div class="kpi-val pu">₹{avg_daily:,.0f}</div><div class="kpi-foot">Over {hi-lo+1} days</div></div>""", unsafe_allow_html=True)
+tp_name = top_performer["Salesperson"] if top_performer is not None else "—"
+tp_val  = float(top_performer["Total"]) if top_performer is not None else 0.0
 
-k5, k6, k7, k8 = st.columns(4)
-with k5:
-    tp_val = f"₹{top_performer['Total']:,.0f}" if top_performer is not None else "—"
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Top Performer</div><div class="kpi-val go" style="font-size:1.1rem;">{tp_name}</div><div class="kpi-foot">{tp_val}</div></div>""", unsafe_allow_html=True)
-with k6:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Best Day</div><div class="kpi-val gr">Day {best_idx+1}</div><div class="kpi-foot">₹{daily_totals.values[best_idx]:,.0f}</div></div>""", unsafe_allow_html=True)
-with k7:
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Active Sellers</div><div class="kpi-val cy">{n_active}</div><div class="kpi-foot">of {len(person_totals)} tracked</div></div>""", unsafe_allow_html=True)
-with k8:
-    zero_color = "re" if len(zero_list) > 0 else "gr"
-    st.markdown(f"""<div class="kpi"><div class="kpi-lab">Zero-Sale Alerts</div><div class="kpi-val {zero_color}">{len(zero_list)}</div><div class="kpi-foot">sellers with gaps</div></div>""", unsafe_allow_html=True)
+d_cls, d_arrow = ("d-up", "▲") if day_chg_pct >= 0 else ("d-dn", "▼")
+w_cls, w_arrow = ("d-up", "▲") if week_chg_pct >= 0 else ("d-dn", "▼")
 
-# ── Daily Trend Chart ──────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Daily Sales Trend<div class="ln"></div></div>', unsafe_allow_html=True)
+# Transactions metrics
+tx_total = tx_received = tx_due = 0.0
+tx_channels = {}; tx_payments = {}; tx_parties = {}
+if not tx_df.empty:
+    tx_total    = float(tx_df["Total Amount"].sum())
+    tx_received = float(tx_df["Received/Paid Amount"].sum())
+    tx_due      = float(tx_df["Balance Due"].sum())
+    if "Sales Channel" in tx_df.columns:
+        tx_channels = tx_df.groupby("Sales Channel")["Total Amount"].sum().sort_values(ascending=False).to_dict()
+    if "Payment Type" in tx_df.columns:
+        tx_payments = tx_df.groupby("Payment Type")["Total Amount"].sum().sort_values(ascending=False).to_dict()
+    if "Party Name" in tx_df.columns:
+        tx_parties = tx_df.groupby("Party Name")["Total Amount"].sum().sort_values(ascending=False).to_dict()
 
-col_chart_ctrl, col_chart_main = st.columns([1, 4])
-with col_chart_ctrl:
-    trend_type = st.radio("Chart type", ["Line", "Bar", "Area", "Step"], key="trend_type")
-    show_ma    = st.checkbox("Show 7-day MA", value=True)
+collection_rate = (tx_received / tx_total * 100) if tx_total else 0.0
 
-with col_chart_main:
-    st.markdown('<div class="gcard"><div class="gcard-title">📈 Daily Revenue · ' + trend_type + ' View</div>', unsafe_allow_html=True)
+# returns (best-effort lookup — section "Sales Return / Cancellation" in the raw report)
+returns_total = 0.0
+try:
+    ret_row = df[df.iloc[:, 0].astype(str).str.contains("Sales Return", case=False, na=False)]
+    if not ret_row.empty:
+        returns_total = float(pd.to_numeric(ret_row.iloc[0, lo:hi+1], errors="coerce").fillna(0).sum())
+except Exception:
+    pass
+net_sales = max(total_sales - returns_total, 0)
+
+# cash & bank (best-effort lookup)
+def _row_value(label_substr):
+    try:
+        r = df[df.iloc[:, 0].astype(str).str.contains(label_substr, case=False, na=False)]
+        if not r.empty:
+            return float(pd.to_numeric(r.iloc[0, 1:], errors="coerce").fillna(0).sum())
+    except Exception:
+        pass
+    return 0.0
+
+bank_balance = _row_value("Bank Balance TOTAL")
+cash_balance = _row_value("Cash Balance TOTAL")
+
+# overall health signal — plain-English summary for the hero banner
+if week_chg_pct >= 5:
+    health_cls, health_txt = "health-good", "🟢 Trending up this week"
+elif week_chg_pct <= -5:
+    health_cls, health_txt = "health-bad", "🔴 Sales declining this week"
+else:
+    health_cls, health_txt = "health-warn", "🟡 Holding steady this week"
+
+# ─────────────────────────────────────────────────────────────────
+# ① HERO BANNER — plain-English status
+# ─────────────────────────────────────────────────────────────────
+st.markdown(f"""
+<div id="hero-banner">
+  <div class="hero-top">
+    <div>
+      <div class="hero-eyebrow"><div class="hero-dot"></div>Live overview · Day {lo}–{hi} · {hi-lo+1} days selected</div>
+      <div class="hero-title">How's the business doing right now?</div>
+      <div class="hero-desc">This page turns your daily sales report into plain answers: who's performing, where the money's coming from, and what needs attention — no spreadsheet reading required.</div>
+    </div>
+    <div class="health-badge {health_cls}">{health_txt}</div>
+  </div>
+  <div class="hero-meta-row">
+    <div class="hmeta">📄 <b>{filename}</b></div>
+    <div class="hmeta">📊 <b>{len(df)}</b> rows · <b>{len(df.columns)}</b> columns</div>
+    <div class="hmeta">👥 <b>{n_active}</b> active salespeople</div>
+    <div class="hmeta">🧾 <b>{len(tx_df) if not tx_df.empty else 0}</b> logged transactions</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ② AI INSIGHTS — short auto-generated summary
+# ─────────────────────────────────────────────────────────────────
+section_header("AI Insights", "A short, plain-English summary generated by ARIA's AI — read this first if you're short on time.", "AI")
+
+
+def generate_ai_insight(summary_text: str) -> str:
+    api_key = st.session_state.get("groq_api_key") or os.environ.get("GROQ_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": (
+                        "You are ARIA, a sales analytics assistant for a homeopathic/pharma sales business. "
+                        "Given a data summary, write a short, plain-English insight in at most 4 short bullet "
+                        "points. No jargon, no markdown headers, just 4 lines starting with an emoji. "
+                        "Focus on: overall performance, a standout person or channel, a risk/concern if any, "
+                        "and one practical suggestion."
+                    )},
+                    {"role": "user", "content": summary_text[:6000]},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 350,
+            },
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        return None
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def cached_ai_insight(cache_key: str, summary_text: str):
+    return generate_ai_insight(summary_text)
+
+
+ai_cache_key = f"{filename}-{lo}-{hi}-{total_sales:.0f}"
+with st.spinner("ARIA is reading your data…"):
+    ai_text = cached_ai_insight(ai_cache_key, get_data_summary_for_ai(filtered_df))
+
+st.markdown('<div class="ai-card">', unsafe_allow_html=True)
+st.markdown('<div class="ai-title">🧠 ARIA says<span class="ai-badge">LLaMA 3.3-70B</span></div>', unsafe_allow_html=True)
+if ai_text:
+    st.markdown(f'<div class="ai-body">{ai_text}</div>', unsafe_allow_html=True)
+else:
+    # graceful fallback if no API key / network — still useful, computed locally
+    fallback = (
+        f"📈 Total sales for the selected period: ₹{total_sales:,.0f}, averaging ₹{avg_daily:,.0f}/day.\n"
+        f"🏆 {tp_name} is the top performer with ₹{tp_val:,.0f} in sales.\n"
+        f"⚠️ {len(zero_list)} salesperson(s) had at least one zero-sale day in this period.\n"
+        f"💡 Tip: open the AI Copilot page for deeper, conversational analysis of this data."
+    )
+    st.markdown(f'<div class="ai-body">{fallback}</div>', unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ③ KEY METRICS
+# ─────────────────────────────────────────────────────────────────
+section_header("Key Metrics", "The core numbers that matter most — sales, targets, and how today compares to yesterday.", "LIVE")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.markdown(f"""<div class="kpi blue">
+      <div class="kpi-top"><div class="kpi-icon">💰</div><div class="kpi-help" title="Total revenue across all channels for the selected date range.">?</div></div>
+      <div class="kpi-lab">Total Sales</div>
+      <div class="kpi-val blue">₹{total_sales:,.0f}</div>
+      <div class="kpi-foot">Period: Day {lo}–{hi}</div>
+    </div>""", unsafe_allow_html=True)
+with c2:
+    st.markdown(f"""<div class="kpi cyan">
+      <div class="kpi-top"><div class="kpi-icon">📅</div><div class="kpi-help" title="Total sales so far this month, compared against your target.">?</div></div>
+      <div class="kpi-lab">Month To Date</div>
+      <div class="kpi-val cyan">₹{real_mtd:,.0f}</div>
+      <div class="kpi-foot">{progress_pct:.1f}% of target</div>
+    </div>""", unsafe_allow_html=True)
+with c3:
+    st.markdown(f"""<div class="kpi gold">
+      <div class="kpi-top"><div class="kpi-icon">📊</div><div class="kpi-help" title="Cumulative sales since the start of the year.">?</div></div>
+      <div class="kpi-lab">Year To Date</div>
+      <div class="kpi-val gold">₹{real_ytd:,.0f}</div>
+      <div class="kpi-foot">Cumulative YTD</div>
+    </div>""", unsafe_allow_html=True)
+with c4:
+    st.markdown(f"""<div class="kpi purple">
+      <div class="kpi-top"><div class="kpi-icon">⚡</div><div class="kpi-help" title="Average sales per day over the selected period.">?</div></div>
+      <div class="kpi-lab">Daily Average</div>
+      <div class="kpi-val purple">₹{avg_daily:,.0f}</div>
+      <div class="kpi-foot">Over {hi-lo+1} days</div>
+    </div>""", unsafe_allow_html=True)
+
+c5, c6, c7, c8 = st.columns(4)
+with c5:
+    st.markdown(f"""<div class="kpi gold">
+      <div class="kpi-top"><div class="kpi-icon">🏆</div><div class="kpi-help" title="The salesperson with the highest total in this period.">?</div></div>
+      <div class="kpi-lab">Top Performer</div>
+      <div class="kpi-val gold" style="font-size:1.15rem;">{tp_name}</div>
+      <div class="kpi-foot">₹{tp_val:,.0f} total</div>
+    </div>""", unsafe_allow_html=True)
+with c6:
+    bill_count_val = "—"
+    try:
+        bill_row = df[df.iloc[:, 0].astype(str).str.contains("Bill Count", na=False)]
+        if not bill_row.empty:
+            bill_count_val = f"{int(bill_row.iloc[0, 1:].sum()):,}"
+    except Exception:
+        pass
+    st.markdown(f"""<div class="kpi cyan">
+      <div class="kpi-top"><div class="kpi-icon">🧾</div><div class="kpi-help" title="Total number of invoices/bills generated.">?</div></div>
+      <div class="kpi-lab">Total Bill Count</div>
+      <div class="kpi-val cyan">{bill_count_val}</div>
+      <div class="kpi-foot">Invoices generated</div>
+    </div>""", unsafe_allow_html=True)
+with c7:
+    pend_color = "red" if tx_due > tx_received else "gold"
+    st.markdown(f"""<div class="kpi {pend_color}">
+      <div class="kpi-top"><div class="kpi-icon">⏳</div><div class="kpi-help" title="Money invoiced but not yet collected from customers.">?</div></div>
+      <div class="kpi-lab">Outstanding Dues</div>
+      <div class="kpi-val {pend_color}">₹{tx_due:,.0f}</div>
+      <div class="kpi-foot">{100 - collection_rate:.1f}% uncollected</div>
+    </div>""", unsafe_allow_html=True)
+with c8:
+    zero_color = "red" if len(zero_list) > 0 else "green"
+    st.markdown(f"""<div class="kpi {zero_color}">
+      <div class="kpi-top"><div class="kpi-icon">🚨</div><div class="kpi-help" title="Salespeople who had at least one day with zero sales.">?</div></div>
+      <div class="kpi-lab">Zero-Sale Alerts</div>
+      <div class="kpi-val {zero_color}">{len(zero_list)}</div>
+      <div class="kpi-foot">Sellers with gaps</div>
+    </div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ④ DAILY SALES TREND
+# ─────────────────────────────────────────────────────────────────
+section_header("Daily Sales Trend", "See how sales moved day by day, and spot your best and worst days at a glance.")
+
+ctrl_col, chart_col = st.columns([1, 4])
+with ctrl_col:
+    trend_type = st.radio("Chart", ["Area", "Line", "Bar", "Step"], key="trend")
+    show_ma = st.checkbox("7-Day Average", value=True, help="Smooths daily ups and downs to show the underlying trend.")
+    show_target_line = st.checkbox("Daily Target", value=False, help="Shows the daily sales goal needed to hit your monthly target.")
+    if len(daily_totals):
+        st.markdown(f"""
+        <div style="margin-top:1rem;font-size:.75rem;color:var(--txt3);line-height:1.7;">
+          🟢 Best day: <b style="color:var(--txt1);">Day {best_idx+1}</b><br>₹{daily_totals.values[best_idx]:,.0f}<br><br>
+          🔴 Worst day: <b style="color:var(--txt1);">Day {worst_idx+1}</b><br>₹{daily_totals.values[worst_idx]:,.0f}
+        </div>
+        """, unsafe_allow_html=True)
+
+with chart_col:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot"></div>Revenue · Daily View</div>', unsafe_allow_html=True)
     if len(daily_totals):
         x_labels = [f"Day {i+1}" for i in range(len(daily_totals))]
-        y_vals   = daily_totals.values
+        y_vals = daily_totals.values
+        daily_target = monthly_target / 26 if monthly_target else 0
 
         fig = go.Figure()
-        if trend_type == "Line":
+        if trend_type == "Area":
+            fig.add_trace(go.Scatter(x=x_labels, y=y_vals, mode="lines",
+                line=dict(color="#3B82F6", width=2.5, shape="spline"),
+                fill="tozeroy", fillcolor="rgba(59,130,246,0.10)", name="Daily Sales"))
+        elif trend_type == "Line":
             fig.add_trace(go.Scatter(x=x_labels, y=y_vals, mode="lines+markers",
-                line=dict(color="#00D4FF", width=2.5, shape="spline"),
-                marker=dict(size=5, color="#4F8CFF"), name="Daily Sales"))
+                line=dict(color="#06B6D4", width=2.5, shape="spline"),
+                marker=dict(size=5, color="#3B82F6"), name="Daily Sales"))
         elif trend_type == "Bar":
+            colors_bar = ["rgba(59,130,246,0.85)" if v >= avg_daily else "rgba(139,92,246,0.7)" for v in y_vals]
             fig.add_trace(go.Bar(x=x_labels, y=y_vals,
-                marker=dict(color="#4F8CFF", opacity=0.8,
-                line=dict(color="#00D4FF", width=0.5)), name="Daily Sales"))
-        elif trend_type == "Area":
+                marker=dict(color=colors_bar, line=dict(color="rgba(59,130,246,0.3)", width=0.5)), name="Daily Sales"))
+        else:
             fig.add_trace(go.Scatter(x=x_labels, y=y_vals, mode="lines",
-                line=dict(color="#00D4FF", width=2, shape="spline"),
-                fill="tozeroy", fillcolor="rgba(79,140,255,0.12)", name="Daily Sales"))
-        elif trend_type == "Step":
-            fig.add_trace(go.Scatter(x=x_labels, y=y_vals, mode="lines",
-                line=dict(color="#7B61FF", width=2, shape="hv"), name="Daily Sales"))
+                line=dict(color="#8B5CF6", width=2.5, shape="hv"), name="Daily Sales"))
 
-        # 7-day moving average
         if show_ma and len(y_vals) >= 7:
             ma = pd.Series(y_vals).rolling(7).mean().values
             fig.add_trace(go.Scatter(x=x_labels, y=ma, mode="lines",
-                line=dict(color="#FFD166", width=1.5, dash="dot"), name="7-Day MA"))
+                line=dict(color="#F59E0B", width=1.5, dash="dot"), name="7-Day Average"))
 
-        fig.update_layout(**PLOT, height=340, showlegend=True,
-            legend=dict(orientation="h", y=1.08, x=0))
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.04)",
-            tickprefix="₹", tickformat=",.0f")
+        if show_target_line and daily_target:
+            fig.add_hline(y=daily_target, line=dict(color="#EF4444", width=1, dash="dash"),
+                          annotation_text=f"Target: ₹{daily_target:,.0f}")
+
+        fig.update_xaxes(showgrid=False, tickfont=dict(size=9))
+        fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.04)", tickprefix="₹", tickformat=",.0f", tickfont=dict(size=9))
+        style_fig(fig, height=330, showlegend=True, legend=dict(orientation="h", y=1.1, x=0, font=dict(size=10)))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.markdown("<div style='color:var(--text-muted);'>No data.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Leaderboard + Zero Alert ───────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Team Performance<div class="ln"></div></div>', unsafe_allow_html=True)
-p1, p2 = st.columns([1.4, 1])
+# ─────────────────────────────────────────────────────────────────
+# ⑤ SALES CHANNEL BREAKDOWN — new
+# ─────────────────────────────────────────────────────────────────
+section_header("Sales Channel Breakdown", "Where is your revenue actually coming from — your own office team, online stores, ads, or medical stores?")
+
+ch_left, ch_right = st.columns([1.3, 1])
+CHANNEL_LABELS = {
+    "Office Sales Kerala":     ("🏢", "Your in-house sales team, Kerala"),
+    "Office Sales Interstate": ("🚚", "In-house team selling outside Kerala"),
+    "Company Direct Sales":    ("🤝", "Direct corporate / B2B deals"),
+    "ADS":                     ("📣", "Sales driven by advertising campaigns"),
+    "Exhibition Sales":        ("🎪", "Trade fairs and exhibitions"),
+    "E-commerce Sales":        ("🛒", "Amazon, Flipkart, Jio, Web"),
+    "Medical Store / Shops":   ("💊", "Third-party medical stores & dealers"),
+}
+
+with ch_left:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot"></div>📡 Revenue by Channel</div>', unsafe_allow_html=True)
+    if not cat_totals.empty:
+        cat_total_sum = cat_totals["Total"].sum()
+        for _, row in cat_totals.sort_values("Total", ascending=False).iterrows():
+            cat_name = row["Category"]
+            pct = (row["Total"] / cat_total_sum * 100) if cat_total_sum else 0
+            icon, desc = CHANNEL_LABELS.get(cat_name, ("📦", ""))
+            color = BLUE_PAL[hash(cat_name) % len(BLUE_PAL)]
+            st.markdown(f"""
+            <div class="ch-row">
+              <span class="ch-name">{icon} {cat_name}<span class="ch-sub">{desc}</span></span>
+              <div class="ch-bar-wrap"><div class="ch-bar" style="width:{pct:.1f}%;background:{color};"></div></div>
+              <span class="ch-val">₹{row['Total']:,.0f}<span class="ch-pct">{pct:.1f}%</span></span>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='color:var(--txt3);font-size:.82rem;'>No channel data for this selection.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with ch_right:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--purple);"></div>🥧 Channel Share</div>', unsafe_allow_html=True)
+    if not cat_totals.empty:
+        donut = px.pie(cat_totals, names="Category", values="Total", hole=0.58, color_discrete_sequence=BLUE_PAL)
+        donut.update_traces(textfont_color="#F1F5F9", marker=dict(line=dict(color="#020510", width=2)))
+        style_fig(donut, height=280, legend=dict(font=dict(size=8.5)))
+        st.plotly_chart(donut, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ⑥ TEAM PERFORMANCE
+# ─────────────────────────────────────────────────────────────────
+section_header("Team Performance", "See who's leading the pack, and who needs a closer look due to inconsistent sales.")
+p1, p2 = st.columns([1.5, 1])
 
 with p1:
-    st.markdown('<div class="gcard"><div class="gcard-title">🏆 Salesperson Leaderboard</div>', unsafe_allow_html=True)
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot"></div>🏆 Salesperson Leaderboard</div>', unsafe_allow_html=True)
     if not person_totals.empty:
-        max_v   = person_totals["Total"].max()
-        medals  = {0: "r1", 1: "r2", 2: "r3"}
-        rows_html = ""
-        for i, row in person_totals.head(leaderboard_n).iterrows():
-            pct      = (row["Total"] / max_v * 100) if max_v else 0
+        max_v = person_totals["Total"].max()
+        medals = {0: "r1", 1: "r2", 2: "r3"}
+        html = ""
+        for i, row in person_totals.head(leaderboard_n).reset_index(drop=True).iterrows():
+            pct = (row["Total"] / max_v * 100) if max_v else 0
             rank_cls = medals.get(i, "")
-            rows_html += f"""
+            av_cls = "gold" if i == 0 else ""
+            initial = row["Salesperson"][0].upper() if row["Salesperson"] else "?"
+            is_zero_risk = row["Salesperson"] in zero_list
+            consist_html = (
+                '<span class="consist-badge consist-watch">⚠ Watch</span>' if is_zero_risk
+                else '<span class="consist-badge consist-reliable">✓ Reliable</span>'
+            )
+            html += f"""
             <div class="lb-row">
               <div class="lb-rank {rank_cls}">#{i+1}</div>
+              <div class="lb-av {av_cls}">{initial}</div>
               <div class="lb-info">
                 <div class="lb-top">
-                  <span>
+                  <div>
                     <span class="lb-name">{row['Salesperson']}</span>
                     <span class="lb-cat"> · {row['Category']}</span>
-                  </span>
+                    {consist_html}
+                  </div>
                   <span class="lb-val">₹{row['Total']:,.0f}</span>
                 </div>
                 <div class="lb-bar"><div class="lb-fill" style="width:{pct:.1f}%;"></div></div>
               </div>
             </div>"""
-        st.markdown(rows_html + "</div>", unsafe_allow_html=True)
+        st.markdown(html + '<div class="gc-note">💡 "Watch" means this person had at least one zero-sale day in the selected period — worth a quick check-in.</div></div>', unsafe_allow_html=True)
     else:
-        st.markdown("<div style='color:var(--text-muted);font-size:0.85rem;'>No data for this selection.</div></div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:var(--txt3);font-size:.82rem;'>No data.</div></div>", unsafe_allow_html=True)
 
 with p2:
-    st.markdown('<div class="gcard"><div class="gcard-title">⚠️ Zero Sales Alerts</div>', unsafe_allow_html=True)
-    rel_zero = [n for n in zero_list if not selected_people or n in selected_people]
+    st.markdown('<div class="gc" style="margin-bottom:.7rem;"><div class="gc-title"><div class="dot" style="background:var(--red);"></div>⚠️ Zero-Sales Alerts</div>', unsafe_allow_html=True)
+    rel_zero = [n for n in zero_list if not sel_people or n in sel_people]
     if rel_zero:
-        pills = "".join([f'<div class="alert-pill"><div class="alert-dot"></div>{n} · had at least one zero day</div>' for n in rel_zero[:10]])
-        st.markdown(pills, unsafe_allow_html=True)
-        if len(rel_zero) > 10:
-            st.markdown(f"<div style='font-size:0.75rem;color:var(--text-muted);margin-top:0.4rem;'>+ {len(rel_zero)-10} more</div>", unsafe_allow_html=True)
+        for n in rel_zero[:8]:
+            st.markdown(f'<div class="alert-card"><div class="adot"></div>{n} · zero-sale day detected</div>', unsafe_allow_html=True)
+        if len(rel_zero) > 8:
+            st.markdown(f"<div style='font-size:.7rem;color:var(--txt3);margin-top:.3rem;'>+{len(rel_zero)-8} more</div>", unsafe_allow_html=True)
     else:
-        st.markdown('<div class="ok-pill">✅ No zero-sales days in selected period</div>', unsafe_allow_html=True)
+        st.markdown('<div class="ok-card">✅ No zero-sales in selected period</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Category Analysis ──────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Category Analysis<div class="ln"></div></div>', unsafe_allow_html=True)
-ca1, ca2 = st.columns(2)
+    st.markdown(f"""<div class="gc">
+      <div class="gc-title"><div class="dot" style="background:var(--gold);"></div>🎯 Month Target</div>
+      <div class="prog-track"><div class="prog-fill" style="width:{progress_pct:.1f}%;"></div></div>
+      <div class="prog-cap"><span>₹{real_mtd:,.0f} achieved</span><span>{progress_pct:.1f}%</span></div>
+      <div style="margin-top:.6rem;font-size:.74rem;color:var(--txt3);">
+        Remaining: <b style="color:var(--txt1);">₹{max(0, monthly_target-real_mtd):,.0f}</b>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
-with ca1:
-    st.markdown('<div class="gcard"><div class="gcard-title">🧬 Category Health</div>', unsafe_allow_html=True)
-    if not cat_totals.empty:
-        cat_max = cat_totals["Total"].max()
-        rows_html = ""
-        for _, row in cat_totals.iterrows():
-            ratio = row["Total"] / cat_max if cat_max else 0
-            if ratio >= 0.6:   bcls, btxt = "strong",   "Strong"
-            elif ratio >= 0.25: bcls, btxt = "moderate", "Moderate"
-            else:               bcls, btxt = "low",      "Low"
-            share = ratio * 100
-            rows_html += f"""
-            <div class="health-row">
-              <span class="health-name">{row['Category']}</span>
-              <span class="health-val">₹{row['Total']:,.0f}</span>
-              <span style="font-size:0.72rem;color:var(--text-muted);">{share:.1f}%</span>
+# ─────────────────────────────────────────────────────────────────
+# ⑦ PRODUCT CATEGORY ANALYSIS (Pareto)
+# ─────────────────────────────────────────────────────────────────
+section_header("Product Category Analysis", "Which product categories drive most of your revenue? The line shows cumulative share — where it crosses 80% tells you which categories matter most.")
+
+pc1, pc2 = st.columns([1.6, 1])
+prod_cats = {}
+try:
+    PRODUCT_LABELS = ["AGRI SALE", "AQUA", "DAIRY", "GENERAL MEDICINE", "MET LIVE STOCK",
+                      "PET", "POULTRY", "Precription - General", "Precription - Ann", "Precription - A k"]
+    for plabel in PRODUCT_LABELS:
+        r = df[df.iloc[:, 0].astype(str).str.strip().str.upper() == plabel.upper()]
+        if not r.empty:
+            val = float(pd.to_numeric(r.iloc[0, lo:hi+1], errors="coerce").fillna(0).sum())
+            if val:
+                prod_cats[plabel.title()] = val
+except Exception:
+    pass
+
+with pc1:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot"></div>📊 Category Pareto (80/20 view)</div>', unsafe_allow_html=True)
+    if prod_cats:
+        pareto_df = pd.DataFrame(sorted(prod_cats.items(), key=lambda x: -x[1]), columns=["Category", "Total"])
+        pareto_df["Cumulative %"] = pareto_df["Total"].cumsum() / pareto_df["Total"].sum() * 100
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Bar(x=pareto_df["Category"], y=pareto_df["Total"], name="Revenue",
+            marker=dict(color="#3B82F6")))
+        fig_p.add_trace(go.Scatter(x=pareto_df["Category"], y=pareto_df["Cumulative %"], name="Cumulative %",
+            yaxis="y2", line=dict(color="#F59E0B", width=2), mode="lines+markers"))
+        fig_p.update_layout(
+            yaxis=dict(tickprefix="₹", tickformat=",.0f", showgrid=True, gridcolor="rgba(255,255,255,0.04)"),
+            yaxis2=dict(overlaying="y", side="right", range=[0, 105], ticksuffix="%"),
+            legend=dict(orientation="h", y=1.12, font=dict(size=9)),
+        )
+        fig_p.add_hline(y=80, yref="y2", line=dict(color="#EF4444", width=1, dash="dot"))
+        style_fig(fig_p, height=300)
+        st.plotly_chart(fig_p, use_container_width=True)
+    else:
+        st.markdown("<div style='color:var(--txt3);font-size:.82rem;'>No product category rows detected in this file.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with pc2:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--green);"></div>🧬 Category Health</div>', unsafe_allow_html=True)
+    if prod_cats:
+        cmax = max(prod_cats.values())
+        for cat, val in sorted(prod_cats.items(), key=lambda x: -x[1]):
+            ratio = val / cmax if cmax else 0
+            if ratio >= 0.6:
+                bcls, btxt = "strong", "Strong"
+            elif ratio >= 0.25:
+                bcls, btxt = "moderate", "Moderate"
+            else:
+                bcls, btxt = "low", "Low"
+            st.markdown(f"""
+            <div class="ch-row">
+              <span class="ch-name">{cat}</span>
               <span class="hbadge {bcls}">{btxt}</span>
-            </div>"""
-        st.markdown(rows_html, unsafe_allow_html=True)
+            </div>""", unsafe_allow_html=True)
     else:
-        st.markdown("<div style='color:var(--text-muted);font-size:0.85rem;'>No category data.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:var(--txt3);font-size:.8rem;'>No category data.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-with ca2:
-    st.markdown('<div class="gcard"><div class="gcard-title">📊 Category Breakdown</div>', unsafe_allow_html=True)
-    cat_chart_type = st.radio("View", ["Donut", "Bar", "Treemap"], key="cat_chart", horizontal=True)
-    if not cat_totals.empty:
-        COLORS = ["#4F8CFF","#7B61FF","#00D4FF","#00FFC6","#FFD166","#FF6B6B","#A78BFA","#38BDF8"]
-        if cat_chart_type == "Donut":
-            cf = px.pie(cat_totals, names="Category", values="Total", hole=0.55,
-                        color_discrete_sequence=COLORS)
-            cf.update_traces(textfont_color="#F4F7FC", marker=dict(line=dict(color="#02030A", width=2)))
-            cf.update_layout(**PLOT, height=280, legend=dict(font=dict(size=9)))
-        elif cat_chart_type == "Bar":
-            cf = px.bar(cat_totals, x="Total", y="Category", orientation="h",
-                        color="Category", color_discrete_sequence=COLORS)
-            cf.update_layout(**PLOT, height=280, showlegend=False)
-            cf.update_xaxes(tickprefix="₹", tickformat=",.0f")
-        else:
-            cf = px.treemap(cat_totals, path=["Category"], values="Total",
-                            color="Total", color_continuous_scale=["#06091A","#4F8CFF","#00FFC6"])
-            cf.update_layout(**PLOT, height=280)
-        st.plotly_chart(cf, use_container_width=True)
+# ─────────────────────────────────────────────────────────────────
+# ⑧ RETURNS & NET SALES — new (waterfall)
+# ─────────────────────────────────────────────────────────────────
+section_header("Returns & Net Sales", "How much of your gross sales actually stayed as real revenue, after returns and cancellations?")
+
+rt1, rt2 = st.columns([1.6, 1])
+with rt1:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--red);"></div>💧 Gross → Returns → Net</div>', unsafe_allow_html=True)
+    wf = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "total"],
+        x=["Gross Sales", "Returns / Cancellations", "Net Sales"],
+        y=[total_sales, -returns_total, net_sales],
+        connector=dict(line=dict(color="rgba(255,255,255,.15)")),
+        decreasing=dict(marker=dict(color="#EF4444")),
+        increasing=dict(marker=dict(color="#10B981")),
+        totals=dict(marker=dict(color="#3B82F6")),
+        text=[f"₹{total_sales:,.0f}", f"-₹{returns_total:,.0f}", f"₹{net_sales:,.0f}"],
+        textposition="outside",
+    ))
+    fig_wf = style_fig(wf, height=300, showlegend=False)
+    fig_wf.update_yaxes(tickprefix="₹", tickformat=",.0f", showgrid=True, gridcolor="rgba(255,255,255,0.04)")
+    st.plotly_chart(fig_wf, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with rt2:
+    return_pct = (returns_total / total_sales * 100) if total_sales else 0
+    return_color = "red" if return_pct > 10 else ("gold" if return_pct > 5 else "green")
+    st.markdown(f"""<div class="gc">
+      <div class="gc-title"><div class="dot" style="background:var(--red);"></div>📉 Return Impact</div>
+      <div class="kpi-val {return_color}" style="font-size:2rem;">{return_pct:.1f}%</div>
+      <div class="kpi-foot" style="margin-bottom:.8rem;">of gross sales returned or cancelled</div>
+      <div class="coll-row"><span class="coll-lbl">Gross Sales</span><span class="coll-val">₹{total_sales:,.0f}</span></div>
+      <div class="coll-row"><span class="coll-lbl">Returns</span><span class="coll-val" style="color:var(--red);">₹{returns_total:,.0f}</span></div>
+      <div class="coll-row"><span class="coll-lbl">Net Sales</span><span class="coll-val" style="color:var(--green);">₹{net_sales:,.0f}</span></div>
+      <div class="gc-note">💡 A return rate above 10% is usually worth investigating — it may point to product quality or fulfillment issues.</div>
+    </div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ⑨ MONEY & CASH POSITION — new
+# ─────────────────────────────────────────────────────────────────
+section_header("Money & Cash Position", "How much money does the business have on hand right now, across bank and cash?")
+
+mn1, mn2, mn3 = st.columns(3)
+total_funds = bank_balance + cash_balance
+with mn1:
+    st.markdown(f"""<div class="kpi blue">
+      <div class="kpi-top"><div class="kpi-icon">🏦</div><div class="kpi-help" title="Total funds held in bank accounts (current + fixed deposit).">?</div></div>
+      <div class="kpi-lab">Bank Balance</div>
+      <div class="kpi-val blue">₹{bank_balance:,.0f}</div>
+      <div class="kpi-foot">Federal Bank · Current + FD</div>
+    </div>""", unsafe_allow_html=True)
+with mn2:
+    st.markdown(f"""<div class="kpi green">
+      <div class="kpi-top"><div class="kpi-icon">💵</div><div class="kpi-help" title="Physical cash held across all locations.">?</div></div>
+      <div class="kpi-lab">Cash Balance</div>
+      <div class="kpi-val green">₹{cash_balance:,.0f}</div>
+      <div class="kpi-foot">Across all cash locations</div>
+    </div>""", unsafe_allow_html=True)
+with mn3:
+    st.markdown(f"""<div class="kpi purple">
+      <div class="kpi-top"><div class="kpi-icon">💰</div><div class="kpi-help" title="Bank balance + cash balance combined — your total available funds.">?</div></div>
+      <div class="kpi-lab">Total Available Funds</div>
+      <div class="kpi-val purple">₹{total_funds:,.0f}</div>
+      <div class="kpi-foot">Bank + Cash combined</div>
+    </div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# ⑩ TRANSACTIONS & COLLECTIONS
+# ─────────────────────────────────────────────────────────────────
+section_header("Transactions & Collections", "Who owes you money, who's paid, and which follow-ups are due soon.")
+tc1, tc2, tc3 = st.columns(3)
+
+with tc1:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--green);"></div>💳 Collection Status</div>', unsafe_allow_html=True)
+    if tx_total > 0:
+        st.markdown(f"""
+        <div class="coll-row"><span class="coll-lbl">Total Invoiced</span><span class="coll-val">₹{tx_total:,.0f}</span></div>
+        <div class="coll-row"><span class="coll-lbl">Collected</span><span class="coll-val" style="color:var(--green);">₹{tx_received:,.0f}</span></div>
+        <div class="coll-row"><span class="coll-lbl">Outstanding</span><span class="coll-val" style="color:var(--red);">₹{tx_due:,.0f}</span></div>
+        <div class="coll-row"><span class="coll-lbl">Collection Rate</span><span class="coll-val" style="color:{'var(--green)' if collection_rate>=50 else 'var(--gold)'};">{collection_rate:.1f}%</span></div>
+        """, unsafe_allow_html=True)
+        donut2 = go.Figure(go.Pie(values=[tx_received, tx_due], labels=["Collected", "Outstanding"], hole=0.62,
+            marker=dict(colors=["#10B981", "#EF4444"], line=dict(color="rgba(0,0,0,0)", width=0)), textfont=dict(size=10)))
+        style_fig(donut2, height=160, showlegend=False, margin=dict(l=0, r=0, t=5, b=5))
+        st.plotly_chart(donut2, use_container_width=True)
     else:
-        st.markdown("<div style='color:var(--text-muted);'>No data.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:var(--txt3);font-size:.8rem;'>No transaction data.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Sales Distribution ─────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Sales Distribution<div class="ln"></div></div>', unsafe_allow_html=True)
-d1c, d2c = st.columns(2)
-
-with d1c:
-    st.markdown('<div class="gcard"><div class="gcard-title">🥧 Salesperson Share</div>', unsafe_allow_html=True)
-    pie_type = st.radio("View", ["Pie", "Bar", "Funnel"], key="pie_type", horizontal=True)
-    if not person_totals.empty:
-        top_n = person_totals.head(8)
-        COLORS = ["#4F8CFF","#7B61FF","#00D4FF","#00FFC6","#FFD166","#FF6B6B","#A78BFA","#38BDF8"]
-        if pie_type == "Pie":
-            pf = px.pie(top_n, names="Salesperson", values="Total", hole=0.5,
-                        color_discrete_sequence=COLORS)
-            pf.update_traces(textfont_color="#F4F7FC", marker=dict(line=dict(color="#02030A",width=2)))
-            pf.update_layout(**PLOT, height=300, legend=dict(font=dict(size=9)))
-        elif pie_type == "Bar":
-            pf = px.bar(top_n, x="Salesperson", y="Total", color="Category",
-                        color_discrete_sequence=COLORS)
-            pf.update_layout(**PLOT, height=300, showlegend=True)
-            pf.update_yaxes(tickprefix="₹", tickformat=",.0f")
-        else:
-            pf = go.Figure(go.Funnel(
-                y=top_n["Salesperson"].tolist(),
-                x=top_n["Total"].tolist(),
-                textposition="inside",
-                marker=dict(color=COLORS[:len(top_n)]),
-                texttemplate="%{label}<br>₹%{value:,.0f}"
-            ))
-            pf.update_layout(**PLOT, height=300)
-        st.plotly_chart(pf, use_container_width=True)
+with tc2:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--cyan);"></div>💰 Payment Methods</div>', unsafe_allow_html=True)
+    if tx_payments:
+        total_pay = sum(tx_payments.values())
+        PAY_COLORS = {"Razorpay": "#8B5CF6", "Cash": "#10B981", "Federal Bank": "#3B82F6"}
+        for pay, val in tx_payments.items():
+            pct = val / total_pay * 100 if total_pay else 0
+            color = PAY_COLORS.get(pay, "#06B6D4")
+            st.markdown(f"""
+            <div class="ch-row">
+              <span class="ch-name">{pay}</span>
+              <div class="ch-bar-wrap"><div class="ch-bar" style="width:{pct:.1f}%;background:{color};"></div></div>
+              <span class="ch-val">₹{val:,.0f}<span class="ch-pct">{pct:.1f}%</span></span>
+            </div>""", unsafe_allow_html=True)
     else:
-        st.markdown("<div style='color:var(--text-muted);'>No data.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:var(--txt3);font-size:.8rem;'>No payment data.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-with d2c:
-    st.markdown('<div class="gcard"><div class="gcard-title">📉 Sales Heatmap (by person × day)</div>', unsafe_allow_html=True)
-    if not person_totals.empty and len(selected_date_cols) > 0:
-        top_people = person_totals.head(10)["Salesperson"].tolist()
-        hm_df = filtered_df[filtered_df.iloc[:, 0].isin(top_people)].copy()
-        hm_df = hm_df.set_index(hm_df.columns[0])
-        hm_df = hm_df.apply(pd.to_numeric, errors="coerce").fillna(0)
-        if not hm_df.empty:
-            hm_fig = px.imshow(
-                hm_df,
-                color_continuous_scale=["#02030A","#071124","#4F8CFF","#00FFC6"],
-                aspect="auto",
-                labels=dict(x="Day", y="Salesperson", color="₹ Sales")
-            )
-            hm_fig.update_layout(**PLOT, height=300)
-            hm_fig.update_coloraxes(colorbar=dict(tickprefix="₹",tickformat=",.0f",len=0.8))
-            st.plotly_chart(hm_fig, use_container_width=True)
-        else:
-            st.markdown("<div style='color:var(--text-muted);'>No heatmap data.</div>", unsafe_allow_html=True)
+with tc3:
+    st.markdown('<div class="gc"><div class="gc-title"><div class="dot" style="background:var(--gold);"></div>📋 Upcoming Follow-Ups</div>', unsafe_allow_html=True)
+    if not tx_df.empty and "Follow up date" in tx_df.columns:
+        fu_df = tx_df[tx_df["Balance Due"] > 0].sort_values("Balance Due", ascending=False)
+        for _, frow in fu_df.head(6).iterrows():
+            party = frow.get("Party Name", "—")
+            due = frow.get("Balance Due", 0)
+            fu_date = frow.get("Follow up date", "—")
+            st.markdown(f"""
+            <div class="fu-row"><div class="fu-dot"></div>
+              <div style="flex:1;"><div style="font-size:.76rem;color:var(--txt2);">{party} · <b style="color:var(--red);">₹{due:,.0f}</b></div>
+              <div class="fu-inv">Due: {fu_date}</div></div>
+            </div>""", unsafe_allow_html=True)
     else:
-        st.markdown("<div style='color:var(--text-muted);'>No data.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:var(--txt3);font-size:.8rem;'>No follow-up data.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Weekly Breakdown ───────────────────────────────────────────────────────────
-if show_week and len(daily_totals) > 0:
-    st.markdown('<div class="sec-hdr">◈ Weekly Breakdown<div class="ln"></div></div>', unsafe_allow_html=True)
-    week_data = []
-    for w in range((len(daily_totals) + 6) // 7):
-        chunk = daily_totals.values[w*7 : (w+1)*7]
-        week_data.append({
-            "Week": f"Week {w+1}",
-            "Total": chunk.sum(),
-            "Avg":   chunk.mean(),
-            "Best":  chunk.max(),
-            "Days":  len(chunk),
-        })
-    wdf = pd.DataFrame(week_data)
+# ─────────────────────────────────────────────────────────────────
+# ⑪ EXPLORE THE DATA (tables + export) — power users
+# ─────────────────────────────────────────────────────────────────
+section_header("Explore the Data", "For when you want to dig into the raw numbers yourself, or export a copy.")
 
-    wf = go.Figure()
-    wf.add_trace(go.Bar(x=wdf["Week"], y=wdf["Total"],
-        name="Total", marker_color="#4F8CFF", opacity=0.85))
-    wf.add_trace(go.Scatter(x=wdf["Week"], y=wdf["Avg"],
-        mode="lines+markers", name="Avg/Day",
-        line=dict(color="#FFD166", width=2), yaxis="y2"))
-    wf.update_layout(**PLOT, height=300, showlegend=True,
-        yaxis=dict(tickprefix="₹", tickformat=",.0f", title="Weekly Total"),
-        yaxis2=dict(tickprefix="₹", tickformat=",.0f", overlaying="y", side="right", title="Avg/Day"),
-        legend=dict(orientation="h", y=1.08))
-    st.plotly_chart(wf, use_container_width=True)
-
-# ── Targets & Summary ──────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Targets &amp; Summary<div class="ln"></div></div>', unsafe_allow_html=True)
-t1, t2, t3 = st.columns(3)
-
-with t1:
-    st.markdown('<div class="gcard"><div class="gcard-title">🎯 Month Target</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class="prog-track"><div class="prog-fill" style="width:{progress_pct:.1f}%;"></div></div>
-    <div class="prog-cap"><span>₹{real_mtd:,.0f} achieved</span><span>{progress_pct:.1f}% of ₹{monthly_target:,.0f}</span></div>
-    <div style="margin-top:0.7rem;font-size:0.78rem;color:var(--text-muted);">
-      Remaining: <b style="color:var(--text-primary);">₹{max(0, monthly_target - real_mtd):,.0f}</b>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with t2:
-    st.markdown('<div class="gcard"><div class="gcard-title">📅 Period Summary</div>', unsafe_allow_html=True)
-    if len(daily_totals):
-        rows = [
-            ("Best Day",     f"Day {best_idx+1}",  f"₹{daily_totals.values[best_idx]:,.0f}",  "var(--green)"),
-            ("Worst Day",    f"Day {worst_idx+1}", f"₹{daily_totals.values[worst_idx]:,.0f}", "var(--red)"),
-            ("Zero Days",    f"{n_zero_days}",      "no sales",                                "var(--red)" if n_zero_days else "var(--green)"),
-            ("Days Tracked", f"{hi-lo+1}",          "total",                                   "var(--cyan)"),
-        ]
-        html = ""
-        for lbl, v1, v2, col in rows:
-            html += f'<div class="day-row"><span style="color:var(--text-muted);">{lbl}</span><span style="color:{col};font-weight:700;">{v1} · {v2}</span></div>'
-        st.markdown(html, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with t3:
-    st.markdown('<div class="gcard"><div class="gcard-title">📊 YTD Progress</div>', unsafe_allow_html=True)
-    ytd_target = monthly_target * 12
-    ytd_pct    = min(real_ytd / ytd_target * 100, 100) if ytd_target else 0
-    st.markdown(f"""
-    <div class="prog-track"><div class="prog-fill" style="width:{ytd_pct:.1f}%;background:linear-gradient(90deg,var(--purple),var(--gold));"></div></div>
-    <div class="prog-cap"><span>₹{real_ytd:,.0f} YTD</span><span>{ytd_pct:.1f}% of annual</span></div>
-    <div style="margin-top:0.7rem;font-size:0.78rem;color:var(--text-muted);">
-      Annual Target: <b style="color:var(--text-primary);">₹{ytd_target:,.0f}</b>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ── Raw Data Table ─────────────────────────────────────────────────────────────
 if show_raw:
-    st.markdown('<div class="sec-hdr">◈ Full Dataset<div class="ln"></div></div>', unsafe_allow_html=True)
-
-    tbl_view = st.radio("Table view", ["Filtered", "Full Dataset", "Salesperson Totals", "Category Totals"],
-                         horizontal=True, key="tbl_view")
-    if tbl_view == "Filtered":
-        st.dataframe(filtered_df, use_container_width=True, height=360)
-    elif tbl_view == "Full Dataset":
-        st.dataframe(df, use_container_width=True, height=360)
-    elif tbl_view == "Salesperson Totals":
+    tbl_view = st.radio("Table view", ["Salesperson Totals", "Category Totals", "Daily Summary", "Filtered Dataset", "Full Dataset"],
+                         horizontal=True, key="tbl_v")
+    if tbl_view == "Salesperson Totals":
         st.dataframe(person_totals.style.format({"Total": "₹{:,.0f}"}), use_container_width=True, height=360)
-    else:
+    elif tbl_view == "Category Totals":
         st.dataframe(cat_totals.style.format({"Total": "₹{:,.0f}"}), use_container_width=True, height=360)
+    elif tbl_view == "Daily Summary":
+        daily_df = pd.DataFrame({"Day": [f"Day {i+1}" for i in range(len(daily_totals))],
+                                  "Sales": daily_totals.values,
+                                  "7-Day Avg": pd.Series(daily_totals.values).rolling(7).mean().values})
+        st.dataframe(daily_df.style.format({"Sales": "₹{:,.0f}", "7-Day Avg": "₹{:,.0f}"}), use_container_width=True, height=360)
+    elif tbl_view == "Filtered Dataset":
+        st.dataframe(filtered_df, use_container_width=True, height=360)
+    else:
+        st.dataframe(df, use_container_width=True, height=360)
 
-# ── Export ─────────────────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Export Data<div class="ln"></div></div>', unsafe_allow_html=True)
+if show_tx and not tx_df.empty:
+    st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+    tf1, tf2, tf3 = st.columns(3)
+    with tf1:
+        ch_filter = st.multiselect("Channel", options=sorted(tx_df["Sales Channel"].dropna().unique().tolist()) if "Sales Channel" in tx_df.columns else [],
+                                    default=None, placeholder="All channels", label_visibility="collapsed")
+    with tf2:
+        sm_filter = st.multiselect("Salesman", options=sorted(tx_df["Salesman Name"].dropna().unique().tolist()) if "Salesman Name" in tx_df.columns else [],
+                                    default=None, placeholder="All salesmen", label_visibility="collapsed")
+    with tf3:
+        show_pending_only = st.checkbox("Pending only (Balance Due > 0)", value=False)
+
+    disp_tx = tx_df.copy()
+    if ch_filter and "Sales Channel" in disp_tx.columns:
+        disp_tx = disp_tx[disp_tx["Sales Channel"].isin(ch_filter)]
+    if sm_filter and "Salesman Name" in disp_tx.columns:
+        disp_tx = disp_tx[disp_tx["Salesman Name"].isin(sm_filter)]
+    if show_pending_only and "Balance Due" in disp_tx.columns:
+        disp_tx = disp_tx[disp_tx["Balance Due"] > 0]
+
+    st.dataframe(disp_tx, use_container_width=True, height=400)
+    st.markdown(f"<div style='font-size:.7rem;color:var(--txt3);margin-top:.3rem;'>{len(disp_tx):,} transactions · ₹{disp_tx['Total Amount'].sum():,.0f} total · ₹{disp_tx['Balance Due'].sum():,.0f} outstanding</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+# EXPORT CENTER
+# ─────────────────────────────────────────────────────────────────
+st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
 e1, e2, e3 = st.columns(3)
-
 with e1:
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-        filtered_df.to_excel(writer,  index=False, sheet_name="Filtered")
+        filtered_df.to_excel(writer, index=False, sheet_name="Filtered")
         person_totals.to_excel(writer, index=False, sheet_name="Leaderboard")
-        cat_totals.to_excel(writer,    index=False, sheet_name="Categories")
-    st.download_button("⬇ Download Excel Report", data=buf.getvalue(),
-        file_name=f"aria_report_{filename.split('.')[0]}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True)
-
+        cat_totals.to_excel(writer, index=False, sheet_name="Categories")
+        if not tx_df.empty:
+            tx_df.to_excel(writer, index=False, sheet_name="Transactions")
+    st.download_button("⬇ Excel Report", data=buf.getvalue(),
+        file_name=f"ARIA_report_{filename.split('.')[0]}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 with e2:
-    st.download_button("⬇ Download AI Summary (.txt)", data=get_data_summary_for_ai(df),
+    st.download_button("⬇ AI Summary (.txt)", data=get_data_summary_for_ai(df),
         file_name="aria_ai_context.txt", mime="text/plain", use_container_width=True)
-
 with e3:
     csv_buf = BytesIO()
     filtered_df.to_csv(csv_buf, index=False)
-    st.download_button("⬇ Download CSV", data=csv_buf.getvalue(),
-        file_name=f"aria_filtered_{filename.split('.')[0]}.csv",
-        mime="text/csv", use_container_width=True)
+    st.download_button("⬇ CSV (Filtered)", data=csv_buf.getvalue(),
+        file_name=f"aria_{filename.split('.')[0]}.csv", mime="text/csv", use_container_width=True)
 
-# ── Generate PDF Report ────────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">◈ Generate Report<div class="ln"></div></div>', unsafe_allow_html=True)
+# ─────────────────────────────────────────────────────────────────
+# NAVIGATION + FOOTER
+# ─────────────────────────────────────────────────────────────────
+st.markdown("<div style='height:1.2rem;'></div>", unsafe_allow_html=True)
+if st.button("Continue to ARIA AI Copilot →", use_container_width=True, type="primary"):
+    st.switch_page("pages/2_AI_Chat.py")
 
 st.markdown("""
-<div style="border-radius:16px;border:1px solid rgba(255,209,102,0.2);background:linear-gradient(135deg,rgba(255,209,102,0.06),rgba(123,97,255,0.04));padding:1.2rem 1.5rem;margin-bottom:1rem;">
-  <div style="font-size:0.95rem;font-weight:700;color:var(--text-primary);margin-bottom:0.4rem;">📄 ARIA Intelligence Report</div>
-  <div style="font-size:0.82rem;color:var(--text-muted);">Generates a full PDF with all charts, tables, KPIs, and an AI-written narrative summary powered by LLaMA 3.3-70B via Groq.</div>
-</div>
+<div class="aria-footer">ARIA · Sales Intelligence Platform · v5.0 Neural Glass</div>
 """, unsafe_allow_html=True)
-
-gen_col, _ = st.columns([1, 2])
-with gen_col:
-    gen_report = st.button("🚀 Generate Full PDF Report", use_container_width=True, type="primary")
-
-if gen_report:
-    with st.spinner("ARIA is generating your report — calling Groq AI for summary…"):
-
-        # ── 1. AI summary via Groq ─────────────────────────────────────────────
-        data_summary = get_data_summary_for_ai(df)
-        ai_prompt = f"""You are ARIA, an expert sales analyst. 
-Generate a concise but comprehensive executive report summary (around 300-400 words) for the following homeopathic company sales data.
-
-Include:
-1. Overall performance highlights
-2. Top performers and standout categories
-3. Trends and patterns observed
-4. Areas of concern (zero-sales, low performers)
-5. Actionable recommendations
-
-Write in a professional, clear tone. Use Indian currency formatting (₹).
-
-{data_summary}"""
-
-        ai_summary = ask_groq(
-            question=ai_prompt,
-            data_summary=data_summary,
-            chat_history=[]
-        )
-
-        # ── 2. Build PDF ───────────────────────────────────────────────────────
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib import colors
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import cm
-            from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                             Table, TableStyle, Image, HRFlowable,
-                                             PageBreak)
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-
-            # Font — try bundled DejaVu, fallback to Helvetica with Rs.
-            font_path = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts", "DejaVuSans.ttf")
-            font_bold_path = font_path.replace("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
-            USE_DEJAVU = False
-            if os.path.exists(font_path):
-                try:
-                    pdfmetrics.registerFont(TTFont("DejaVu", font_path))
-                    if os.path.exists(font_bold_path):
-                        pdfmetrics.registerFont(TTFont("DejaVuBold", font_bold_path))
-                    USE_DEJAVU = True
-                except Exception:
-                    pass
-
-            BASE_FONT      = "DejaVu"     if USE_DEJAVU else "Helvetica"
-            BASE_FONT_BOLD = "DejaVuBold" if USE_DEJAVU else "Helvetica-Bold"
-            INR = "₹" if USE_DEJAVU else "Rs."
-
-            def fmt(v):
-                return f"{INR}{v:,.0f}"
-
-            # ── Colours ──────────────────────────────────────────────────────
-            C_BG    = colors.HexColor("#02030A")
-            C_BLUE  = colors.HexColor("#4F8CFF")
-            C_CYAN  = colors.HexColor("#00D4FF")
-            C_GREEN = colors.HexColor("#00FFC6")
-            C_GOLD  = colors.HexColor("#FFD166")
-            C_MUTED = colors.HexColor("#6B7694")
-            C_WHITE = colors.white
-            C_DARK  = colors.HexColor("#06091A")
-
-            # ── Styles ────────────────────────────────────────────────────────
-            styles = getSampleStyleSheet()
-            def S(name, **kw):
-                return ParagraphStyle(name, fontName=BASE_FONT, **kw)
-            def SB(name, **kw):
-                return ParagraphStyle(name, fontName=BASE_FONT_BOLD, **kw)
-
-            s_title  = SB("title",  fontSize=28, textColor=C_WHITE, spaceAfter=4, leading=32)
-            s_sub    = S("sub",     fontSize=12, textColor=C_MUTED, spaceAfter=2)
-            s_h1     = SB("h1",     fontSize=14, textColor=C_CYAN,  spaceBefore=14, spaceAfter=6)
-            s_h2     = SB("h2",     fontSize=11, textColor=C_GOLD,  spaceBefore=8,  spaceAfter=4)
-            s_body   = S("body",    fontSize=9,  textColor=colors.HexColor("#AEB9D4"), leading=14, spaceAfter=4)
-            s_kpi_n  = SB("kpin",   fontSize=20, textColor=C_CYAN)
-            s_kpi_l  = S("kpil",    fontSize=7,  textColor=C_MUTED)
-            s_ai     = S("ai",      fontSize=9.5,textColor=colors.HexColor("#C8D4E8"), leading=16)
-
-            buf_pdf = BytesIO()
-            doc = SimpleDocTemplate(buf_pdf, pagesize=A4,
-                leftMargin=1.8*cm, rightMargin=1.8*cm,
-                topMargin=1.8*cm,  bottomMargin=1.8*cm)
-
-            story = []
-
-            # ── Cover ─────────────────────────────────────────────────────────
-            story.append(Spacer(1, 1.5*cm))
-            story.append(Paragraph("ARIA", s_title))
-            story.append(Paragraph("Sales Intelligence Report", SB("t2", fontSize=16, textColor=C_BLUE, spaceAfter=4)))
-            story.append(Paragraph(f"Generated: {datetime.datetime.now().strftime('%d %B %Y, %I:%M %p')}", s_sub))
-            story.append(Paragraph(f"Source file: {filename}  ·  Period: Day {lo}–Day {hi}  ·  {hi-lo+1} days", s_sub))
-            story.append(HRFlowable(width="100%", thickness=1, color=C_BLUE, spaceAfter=16))
-            story.append(Spacer(1, 0.5*cm))
-
-            # ── KPI summary table ─────────────────────────────────────────────
-            story.append(Paragraph("Key Performance Indicators", s_h1))
-            kpi_data = [
-                ["Metric", "Value", "Metric", "Value"],
-                ["Total Sales",    fmt(total_sales), "MTD",           fmt(real_mtd)],
-                ["YTD",            fmt(real_ytd),    "Daily Average",  fmt(avg_daily)],
-                ["Top Performer",  tp_name,           "Active Sellers", str(n_active)],
-                ["Best Day",       f"Day {best_idx+1} · {fmt(daily_totals.values[best_idx])}",
-                 "Zero Alerts",    str(len(zero_list))],
-                ["Month Target",   fmt(monthly_target), "Achievement",  f"{progress_pct:.1f}%"],
-            ]
-            kpi_tbl = Table(kpi_data, colWidths=[4*cm, 4.5*cm, 4*cm, 4.5*cm])
-            kpi_tbl.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0),   C_DARK),
-                ("TEXTCOLOR",  (0,0), (-1,0),   C_CYAN),
-                ("FONTNAME",   (0,0), (-1,0),   BASE_FONT_BOLD),
-                ("FONTSIZE",   (0,0), (-1,-1),  8),
-                ("FONTNAME",   (0,1), (-1,-1),  BASE_FONT),
-                ("TEXTCOLOR",  (0,1), (-1,-1),  C_WHITE),
-                ("TEXTCOLOR",  (1,1), (1,-1),   C_GREEN),
-                ("TEXTCOLOR",  (3,1), (3,-1),   C_GOLD),
-                ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.HexColor("#06091A"), colors.HexColor("#040712")]),
-                ("GRID",       (0,0), (-1,-1),  0.3, colors.HexColor("#1A2040")),
-                ("TOPPADDING", (0,0), (-1,-1),  5),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 5),
-                ("LEFTPADDING",(0,0), (-1,-1),  6),
-            ]))
-            story.append(kpi_tbl)
-            story.append(Spacer(1, 0.6*cm))
-
-            # ── Leaderboard table ─────────────────────────────────────────────
-            story.append(Paragraph("Salesperson Leaderboard", s_h1))
-            if not person_totals.empty:
-                lb_header = [["Rank", "Salesperson", "Category", "Total Sales", "Share %"]]
-                total_s   = person_totals["Total"].sum()
-                lb_rows   = []
-                for i, row in person_totals.head(15).iterrows():
-                    share = row["Total"] / total_s * 100 if total_s else 0
-                    lb_rows.append([f"#{i+1}", row["Salesperson"], row["Category"],
-                                    fmt(row["Total"]), f"{share:.1f}%"])
-                lb_tbl = Table(lb_header + lb_rows,
-                               colWidths=[1.5*cm, 4.5*cm, 4.5*cm, 4*cm, 2.5*cm])
-                lb_tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,0),   C_DARK),
-                    ("TEXTCOLOR",  (0,0), (-1,0),   C_GOLD),
-                    ("FONTNAME",   (0,0), (-1,0),   BASE_FONT_BOLD),
-                    ("FONTSIZE",   (0,0), (-1,-1),  8),
-                    ("FONTNAME",   (0,1), (-1,-1),  BASE_FONT),
-                    ("TEXTCOLOR",  (0,1), (-1,-1),  C_WHITE),
-                    ("TEXTCOLOR",  (3,1), (3,-1),   C_GREEN),
-                    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.HexColor("#06091A"), colors.HexColor("#040712")]),
-                    ("GRID",       (0,0), (-1,-1),  0.3, colors.HexColor("#1A2040")),
-                    ("TOPPADDING", (0,0), (-1,-1),  4),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-                    ("LEFTPADDING",(0,0), (-1,-1),  5),
-                ]))
-                story.append(lb_tbl)
-
-            story.append(PageBreak())
-
-            # ── Category breakdown ─────────────────────────────────────────────
-            story.append(Paragraph("Category Performance", s_h1))
-            if not cat_totals.empty:
-                ct_header = [["Category", "Total Sales", "Share %", "Health"]]
-                cat_total_sum = cat_totals["Total"].sum()
-                ct_rows = []
-                for _, row in cat_totals.iterrows():
-                    share = row["Total"] / cat_total_sum * 100 if cat_total_sum else 0
-                    ratio = row["Total"] / cat_totals["Total"].max() if cat_totals["Total"].max() else 0
-                    health = "Strong" if ratio >= 0.6 else ("Moderate" if ratio >= 0.25 else "Low")
-                    ct_rows.append([row["Category"], fmt(row["Total"]), f"{share:.1f}%", health])
-                ct_tbl = Table(ct_header + ct_rows, colWidths=[5.5*cm, 4.5*cm, 3*cm, 4*cm])
-                ct_tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,0), C_DARK),
-                    ("TEXTCOLOR",  (0,0), (-1,0), C_CYAN),
-                    ("FONTNAME",   (0,0), (-1,0), BASE_FONT_BOLD),
-                    ("FONTSIZE",   (0,0), (-1,-1), 8),
-                    ("FONTNAME",   (0,1), (-1,-1), BASE_FONT),
-                    ("TEXTCOLOR",  (0,1), (-1,-1), C_WHITE),
-                    ("TEXTCOLOR",  (1,1), (1,-1),  C_GREEN),
-                    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.HexColor("#06091A"), colors.HexColor("#040712")]),
-                    ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#1A2040")),
-                    ("TOPPADDING", (0,0), (-1,-1), 4),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-                    ("LEFTPADDING",(0,0), (-1,-1),  5),
-                ]))
-                story.append(ct_tbl)
-
-            story.append(Spacer(1, 0.5*cm))
-
-            # ── Static charts (matplotlib) ─────────────────────────────────────
-            story.append(Paragraph("Daily Sales Trend", s_h1))
-
-            def mpl_fig_to_image(fig):
-                img_buf = BytesIO()
-                fig.savefig(img_buf, format="png", bbox_inches="tight", dpi=150,
-                            facecolor="#02030A")
-                img_buf.seek(0)
-                plt.close(fig)
-                return img_buf
-
-            # Trend chart
-            fig_t, ax_t = plt.subplots(figsize=(14, 4), facecolor="#02030A")
-            ax_t.set_facecolor("#06091A")
-            x_t = range(len(daily_totals))
-            ax_t.fill_between(x_t, daily_totals.values, alpha=0.18, color="#4F8CFF")
-            ax_t.plot(x_t, daily_totals.values, color="#00D4FF", linewidth=2.5)
-            ax_t.scatter(x_t, daily_totals.values, color="#4F8CFF", s=25, zorder=5)
-            if len(daily_totals) >= 7:
-                ma7 = pd.Series(daily_totals.values).rolling(7).mean()
-                ax_t.plot(x_t, ma7, color="#FFD166", linewidth=1.5, linestyle="--", label="7-Day MA")
-                ax_t.legend(facecolor="#06091A", edgecolor="#1A2040", labelcolor="#AEB9D4", fontsize=8)
-            ax_t.set_xlabel("Day", color="#6B7694", fontsize=9)
-            ax_t.set_ylabel("Sales (₹)", color="#6B7694", fontsize=9)
-            ax_t.tick_params(colors="#6B7694", labelsize=8)
-            ax_t.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x/1e3:.0f}K" if x >= 1000 else str(int(x))))
-            ax_t.spines[:].set_color("#1A2040")
-            ax_t.grid(axis="y", color="#1A2040", linewidth=0.5)
-            img_t = mpl_fig_to_image(fig_t)
-            story.append(Image(img_t, width=17*cm, height=5*cm))
-            story.append(Spacer(1, 0.4*cm))
-
-            # Category bar chart
-            story.append(Paragraph("Category Sales Breakdown", s_h1))
-            if not cat_totals.empty:
-                fig_c, ax_c = plt.subplots(figsize=(12, 4), facecolor="#02030A")
-                ax_c.set_facecolor("#06091A")
-                pal = ["#4F8CFF","#7B61FF","#00D4FF","#00FFC6","#FFD166","#FF6B6B"]
-                bars = ax_c.barh(cat_totals["Category"], cat_totals["Total"],
-                                  color=pal[:len(cat_totals)], alpha=0.88)
-                for bar, val in zip(bars, cat_totals["Total"]):
-                    ax_c.text(bar.get_width() * 1.01, bar.get_y() + bar.get_height()/2,
-                              f"₹{val/1e3:.1f}K", va="center", color="#AEB9D4", fontsize=8)
-                ax_c.set_xlabel("Total Sales (₹)", color="#6B7694", fontsize=9)
-                ax_c.tick_params(colors="#6B7694", labelsize=8)
-                ax_c.spines[:].set_color("#1A2040")
-                ax_c.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x/1e3:.0f}K"))
-                ax_c.grid(axis="x", color="#1A2040", linewidth=0.5)
-                img_c = mpl_fig_to_image(fig_c)
-                story.append(Image(img_c, width=15*cm, height=5*cm))
-
-            story.append(PageBreak())
-
-            # ── Zero sales list ────────────────────────────────────────────────
-            story.append(Paragraph("Zero-Sales Alerts", s_h1))
-            if zero_list:
-                za_header = [["Salesperson"]]
-                za_rows   = [[n] for n in zero_list]
-                za_tbl    = Table(za_header + za_rows, colWidths=[17*cm])
-                za_tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,0),   C_DARK),
-                    ("TEXTCOLOR",  (0,0), (-1,0),   colors.HexColor("#FF6B6B")),
-                    ("FONTNAME",   (0,0), (-1,0),   BASE_FONT_BOLD),
-                    ("FONTSIZE",   (0,0), (-1,-1),  8),
-                    ("FONTNAME",   (0,1), (-1,-1),  BASE_FONT),
-                    ("TEXTCOLOR",  (0,1), (-1,-1),  C_WHITE),
-                    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.HexColor("#0D0610"), colors.HexColor("#06091A")]),
-                    ("GRID",       (0,0), (-1,-1),  0.3, colors.HexColor("#2A1020")),
-                    ("TOPPADDING", (0,0), (-1,-1),  3),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-                    ("LEFTPADDING",(0,0), (-1,-1),  5),
-                ]))
-                story.append(za_tbl)
-            else:
-                story.append(Paragraph("✓ No zero-sales alerts in the selected period.", s_body))
-
-            story.append(Spacer(1, 0.6*cm))
-            story.append(HRFlowable(width="100%", thickness=1, color=C_BLUE))
-            story.append(Spacer(1, 0.4*cm))
-
-            # ── AI Summary ────────────────────────────────────────────────────
-            story.append(Paragraph("AI-Generated Executive Summary", s_h1))
-            story.append(Paragraph("Powered by LLaMA 3.3-70B via Groq API", s_sub))
-            story.append(Spacer(1, 0.3*cm))
-            for para in ai_summary.split("\n"):
-                para = para.strip()
-                if para:
-                    story.append(Paragraph(para, s_ai))
-                    story.append(Spacer(1, 0.15*cm))
-
-            story.append(Spacer(1, 0.6*cm))
-            story.append(HRFlowable(width="100%", thickness=0.5, color=C_MUTED))
-            story.append(Spacer(1, 0.2*cm))
-            story.append(Paragraph(f"ARIA Sales Intelligence Platform  ·  Report generated {datetime.datetime.now().strftime('%d %B %Y')}  ·  Powered by LLaMA 3.3-70B",
-                S("footer", fontSize=7, textColor=C_MUTED, alignment=1)))
-
-            # ── Build PDF ──────────────────────────────────────────────────────
-            def draw_bg(canvas, doc):
-                canvas.saveState()
-                canvas.setFillColor(C_BG)
-                canvas.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
-                canvas.restoreState()
-
-            doc.build(story, onFirstPage=draw_bg, onLaterPages=draw_bg)
-            pdf_bytes = buf_pdf.getvalue()
-
-            st.success("✅ Report generated successfully!")
-            st.download_button(
-                "⬇ Download ARIA Intelligence Report (PDF)",
-                data=pdf_bytes,
-                file_name=f"ARIA_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-
-            # Show AI summary inline too
-            st.markdown('<div class="sec-hdr">◈ AI Executive Summary<div class="ln"></div></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="ai-card"><div class="ai-title">🤖 ARIA Analysis</div><div class="ai-body">{ai_summary}</div></div>', unsafe_allow_html=True)
-
-        except ImportError:
-            st.error("reportlab not installed. Run: pip install reportlab")
-        except Exception as e:
-            st.error(f"Report generation failed: {e}")
-            st.exception(e)
-
-# ── Navigation ──────────────────────────────────────────────────────────────────
-st.markdown("<div style='height:2rem;'></div>", unsafe_allow_html=True)
-if st.button("Continue to AI Assistant →", use_container_width=True, type="primary"):
-    st.switch_page("pages/2_AI_Chat.py")
