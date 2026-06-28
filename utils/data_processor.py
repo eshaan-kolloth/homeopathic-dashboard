@@ -1,274 +1,195 @@
 import pandas as pd
+from utils.data_loader import get_category_for_person, get_summary_value
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ROW CLASSIFICATION
-#
-# A homeopathic company "Daily Report" sheet mixes three kinds of rows:
-#   1. CATEGORY HEADERS  — e.g. "Office Sales Kerala", "ADS" — these are
-#      section subtotals, not people.
-#   2. PERSON / CHANNEL ROWS — e.g. "FEMINA PA", "AMAZON," — the actual
-#      data we want to rank and analyse.
-#   3. SUMMARY / FINANCIAL ROWS — e.g. "Total Sales", "GST Collected",
-#      "Total To month" — these are never people and must never appear
-#      in a leaderboard or zero-sales alert.
-#
-# Everything below works off explicit keyword sets so it's robust even if
-# row positions shift between weekly exports.
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# CORE PROCESSORS — all work on the CLEAN df from data_loader
+# ─────────────────────────────────────────────────────────────────
 
-CATEGORY_HEADER_KEYWORDS = [
-    "office sales kerala",
-    "office sales interstate",
-    "company direct sales",
-    "ads",
-    "exhibition sales",
-    "e commerce sales",
-    "e-commerce sales",
-    "ecommerce sales",
-    "medical store",
-    "medical store / shops",
-]
-
-# Rows that are never people — totals, summaries, financial breakdown.
-EXCLUDE_KEYWORDS = [
-    "total sales",
-    "sales return",
-    "cancellation",
-    "net sales",
-    "total to month",
-    "total year to date",
-    "agri sale",
-    "otc",
-    "precription",
-    "prescription",
-    "total coupon",
-    "discount",
-    "gst collected",
-    "transporation",
-    "transportation",
-    "total bill amount",
-    "daily report",
-]
-
-CATEGORY_FOR_ROW = {
-    "femina pa": "Office Sales Kerala", "lincy": "Office Sales Kerala",
-    "mareena": "Office Sales Kerala", "laya": "Office Sales Kerala",
-    "aswathy raju": "Office Sales Kerala", "sajitha": "Office Sales Kerala",
-    "krishnapirya": "Office Sales Kerala",
-    "aparna": "Office Sales Interstate", "sneha": "Office Sales Interstate",
-    "indrakumar": "Office Sales Interstate",
-    "ajaykumar": "Company Direct Sales", "saju tr": "Company Direct Sales",
-    "follow up  golitha": "Company Direct Sales", "follow up golitha": "Company Direct Sales",
-    "anwar": "ADS", "anithakumar": "ADS", "dr arun": "ADS", "binoy": "ADS",
-    "gangadharan": "ADS", "muneer": "ADS", "nikhil": "ADS", "nezia": "ADS",
-    "noby": "ADS", "shylaja": "ADS", "selvaraj": "ADS", "satheesh": "ADS",
-    "amazon,": "E-commerce", "amazon": "E-commerce", "flipkart": "E-commerce",
-    "jio": "E-commerce", "web": "E-commerce",
-    "medical store / shops": "Medical Store",
-}
-
-
-def _is_category_header(label: str) -> bool:
-    label_l = label.strip().lower()
-    return any(kw in label_l for kw in CATEGORY_HEADER_KEYWORDS)
-
-
-def _is_excluded(label: str) -> bool:
-    label_l = label.strip().lower()
-    if label_l in ("0", "", "nan"):
-        return True
-    return any(kw in label_l for kw in EXCLUDE_KEYWORDS)
-
-
-def _is_person_row(label: str) -> bool:
-    """A row counts as a person/channel row if it's not blank, not a
-    category header, and not an excluded summary/financial row."""
-    label_l = label.strip().lower()
-    if label_l in ("0", "", "nan"):
-        return False
-    if _is_category_header(label_l):
-        return False
-    if _is_excluded(label_l):
-        return False
-    return True
-
-
-def get_category_for_person(name: str) -> str:
-    """Looks up which sales category a person/channel belongs to."""
-    return CATEGORY_FOR_ROW.get(str(name).strip().lower(), "Other")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# CORE EXTRACTORS
-# ──────────────────────────────────────────────────────────────────────────────
-
-def get_person_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Returns only the rows that represent an actual salesperson or
-    sales channel (e.g. AMAZON), with category headers and summary
-    rows stripped out."""
-    labels = df.iloc[:, 0].astype(str)
-    mask = labels.apply(_is_person_row)
-    return df[mask].copy()
-
-
-def get_category_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Returns only the category header / subtotal rows."""
-    labels = df.iloc[:, 0].astype(str)
-    mask = labels.apply(_is_category_header)
-    return df[mask].copy()
-
-
-def get_summary_row(df: pd.DataFrame, keyword: str) -> pd.Series:
-    """Finds a specific summary row (e.g. 'total sales', 'gst collected')
-    by keyword and returns its numeric values across all date columns.
-    Returns an empty Series if not found."""
-    labels = df.iloc[:, 0].astype(str).str.strip().str.lower()
-    match = df[labels.str.contains(keyword, na=False)]
-    if match.empty:
-        return pd.Series(dtype=float)
-    row = match.iloc[0, 1:]
-    return pd.to_numeric(row, errors='coerce').fillna(0)
-
-
-def extract_summary(df):
-    """
-    Extracts key summary statistics from the cleaned DataFrame,
-    computed only from actual person/channel rows (category headers
-    and summary rows excluded).
-    """
-    person_df = get_person_rows(df)
-    numeric_df = person_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').fillna(0)
-
-    summary = {}
-    summary['total_sales'] = numeric_df.sum().sum()
-    summary['daily_totals'] = numeric_df.sum(axis=0).tolist()
-    summary['row_totals'] = numeric_df.sum(axis=1).tolist()
-    summary['max_value'] = numeric_df.max().max() if not numeric_df.empty else 0
-    nonzero = numeric_df[numeric_df > 0]
-    summary['min_nonzero'] = nonzero.min().min() if not nonzero.empty else 0
-    return summary
+def get_date_columns(df: pd.DataFrame) -> list:
+    """Returns list of date column names (everything except 'Name')."""
+    return [c for c in df.columns if c != "Name"]
 
 
 def get_salesperson_totals(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Returns a DataFrame with columns ['Salesperson', 'Category', 'Total'],
-    built only from real person/channel rows — category headers and
-    summary rows (Total Sales, GST, MTD, YTD, etc.) are excluded.
+    Returns DataFrame with columns [Salesperson, Category, Total].
+    Only real person rows — no summaries, no category headers.
     """
-    person_df = get_person_rows(df)
-    if person_df.empty:
-        return pd.DataFrame(columns=['Salesperson', 'Category', 'Total'])
+    date_cols = get_date_columns(df)
+    if not date_cols:
+        return pd.DataFrame(columns=["Salesperson", "Category", "Total"])
 
-    numeric_cols = person_df.columns[1:]
-    person_df = person_df.copy()
-    person_df['Total'] = (
-        person_df[numeric_cols]
-        .apply(pd.to_numeric, errors='coerce')
-        .fillna(0)
-        .sum(axis=1)
-    )
+    result_rows = []
+    for _, row in df.iterrows():
+        name = str(row["Name"]).strip()
+        total = pd.to_numeric(
+            pd.Series([row[c] for c in date_cols]), errors="coerce"
+        ).fillna(0).sum()
 
-    result = person_df[[person_df.columns[0], 'Total']].copy()
-    result.columns = ['Salesperson', 'Total']
-    result['Category'] = result['Salesperson'].apply(get_category_for_person)
-    result = result[result['Total'] > 0]
-    result = result.sort_values('Total', ascending=False).reset_index(drop=True)
-    return result[['Salesperson', 'Category', 'Total']]
+        category = get_category_for_person(name)
+        result_rows.append({
+            "Salesperson": name,
+            "Category":    category,
+            "Total":       float(total),
+        })
+
+    result = pd.DataFrame(result_rows)
+    result = result[result["Total"] > 0]
+    result = result.sort_values("Total", ascending=False).reset_index(drop=True)
+    return result[["Salesperson", "Category", "Total"]]
+
+
+def get_category_totals(df: pd.DataFrame) -> pd.DataFrame:
+    """Returns [Category, Total] grouped."""
+    totals = get_salesperson_totals(df)
+    if totals.empty:
+        return pd.DataFrame(columns=["Category", "Total"])
+    grouped = totals.groupby("Category", as_index=False)["Total"].sum()
+    return grouped.sort_values("Total", ascending=False).reset_index(drop=True)
+
+
+def get_daily_totals(df: pd.DataFrame) -> pd.Series:
+    """Returns sum per date column — the real daily revenue."""
+    date_cols = get_date_columns(df)
+    if not date_cols:
+        return pd.Series(dtype=float)
+    numeric = df[date_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+    return numeric.sum(axis=0)
 
 
 def get_zero_sales(df: pd.DataFrame) -> list:
-    """
-    Returns list of salesperson/channel names who had zero sales on at
-    least one day. Category headers and summary rows are excluded.
-    """
-    person_df = get_person_rows(df)
+    """Returns list of salesperson names with at least one zero-sales day."""
+    date_cols = get_date_columns(df)
     zero_list = []
-    for _, row in person_df.iterrows():
-        name = str(row.iloc[0]).strip()
-        values = pd.to_numeric(row.iloc[1:], errors='coerce').fillna(0)
+    for _, row in df.iterrows():
+        name = str(row["Name"]).strip()
+        values = pd.to_numeric(
+            pd.Series([row[c] for c in date_cols]), errors="coerce"
+        ).fillna(0)
         if (values == 0).any():
             zero_list.append(name)
     return zero_list
 
 
-def get_daily_totals(df: pd.DataFrame) -> pd.Series:
-    """
-    Returns true daily totals (one value per date column), computed by
-    summing only real person/channel rows. This is what should be
-    plotted on the trend chart and used for MTD/YTD/today-vs-yesterday.
-    """
-    person_df = get_person_rows(df)
-    numeric_df = person_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').fillna(0)
-    return numeric_df.sum(axis=0)
+def get_mtd_total(raw_df: pd.DataFrame) -> float:
+    """Gets Month-To-Date from the raw (unfiltered) DataFrame."""
+    val = get_summary_value(raw_df, "total to month")
+    if val > 0:
+        return val
+    # Fallback — sum all numeric in the last column
+    try:
+        last_col = raw_df.iloc[:, -1]
+        numeric  = pd.to_numeric(last_col, errors="coerce").fillna(0)
+        return float(numeric.sum())
+    except Exception:
+        return 0.0
 
 
-def get_category_totals(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Returns a DataFrame with columns ['Category', 'Total'] — total sales
-    per category (Kerala, Interstate, ADS, E-commerce, etc.), computed
-    from the real person/channel rows grouped by category.
-    """
-    totals = get_salesperson_totals(df)
-    if totals.empty:
-        return pd.DataFrame(columns=['Category', 'Total'])
-    grouped = totals.groupby('Category', as_index=False)['Total'].sum()
-    return grouped.sort_values('Total', ascending=False).reset_index(drop=True)
+def get_ytd_total(raw_df: pd.DataFrame) -> float:
+    """Gets Year-To-Date from the raw (unfiltered) DataFrame."""
+    val = get_summary_value(raw_df, "total year to date")
+    if val > 0:
+        return val
+    val = get_summary_value(raw_df, "year to date")
+    return val
 
 
-def get_mtd_total(df: pd.DataFrame) -> float:
-    """Returns the latest 'Total To month' value if present, else falls
-    back to the sum of daily totals."""
-    row = get_summary_row(df, "total to month")
-    if not row.empty:
-        return float(row.iloc[-1])
-    return float(get_daily_totals(df).sum())
+def get_bank_balance(raw_df: pd.DataFrame) -> float:
+    return get_summary_value(raw_df, "bank balance total")
 
 
-def get_ytd_total(df: pd.DataFrame) -> float:
-    """Returns the latest 'Total Year To Date' value if present, else 0."""
-    row = get_summary_row(df, "total year to date")
-    if not row.empty:
-        return float(row.iloc[-1])
+def get_cash_balance(raw_df: pd.DataFrame) -> float:
+    return get_summary_value(raw_df, "cash balance total")
+
+
+def get_bill_count(raw_df: pd.DataFrame) -> str:
+    val = get_summary_value(raw_df, "bill count")
+    if val > 0:
+        return f"{int(val):,}"
+    return "—"
+
+
+def get_returns_total(raw_df: pd.DataFrame, lo: int, hi: int) -> float:
+    """Gets sales returns for the selected date range."""
+    for i, row in raw_df.iterrows():
+        cell = str(row.iloc[0]).strip().lower()
+        if "sales return" in cell or "cancellation" in cell:
+            try:
+                vals = pd.to_numeric(row.iloc[1:], errors="coerce").fillna(0)
+                return float(vals.iloc[lo - 1: hi].sum())
+            except Exception:
+                return 0.0
     return 0.0
 
 
-def get_data_summary_for_ai(df: pd.DataFrame) -> str:
+def get_product_category_totals(raw_df: pd.DataFrame, lo: int, hi: int) -> dict:
     """
-    Creates a text summary of the data to send to Groq AI as context.
-    Only real salesperson/channel totals are included — category
-    headers and financial summary rows are described separately so
-    the AI doesn't confuse a subtotal with a person.
+    Extracts product category rows (AGRI, AQUA, DAIRY etc.)
+    and returns {label: total} dict.
     """
-    salesperson_totals = get_salesperson_totals(df)
-    category_totals = get_category_totals(df)
-    daily_totals = get_daily_totals(df)
-    mtd = get_mtd_total(df)
-    ytd = get_ytd_total(df)
+    PRODUCT_ROWS = {
+        "AGRI SALE":             ("🌾", "Agriculture",  "#10B981"),
+        "AQUA":                  ("🐟", "Aquaculture",  "#06B6D4"),
+        "DAIRY":                 ("🥛", "Dairy",        "#60A5FA"),
+        "GENERAL MEDICINE":      ("💊", "General Med",  "#8B5CF6"),
+        "MET LIVE STOCK":        ("🐄", "Livestock",    "#F59E0B"),
+        "PET":                   ("🐾", "Pet Care",     "#EC4899"),
+        "POULTRY":               ("🐔", "Poultry",      "#F97316"),
+        "PRECRIPTION - GENERAL": ("📋", "Rx General",   "#3B82F6"),
+        "PRECRIPTION - ANN":     ("📋", "Rx Ann",       "#A78BFA"),
+        "PRECRIPTION - A K":     ("📋", "Rx AK",        "#34D399"),
+    }
 
-    lines = []
-    lines.append("=== SALES DATA SUMMARY ===")
-    lines.append(f"Total rows of data: {len(df)}")
-    lines.append(f"Total columns: {len(df.columns)}")
-    lines.append(f"Total Sales (sum of all days): ₹{daily_totals.sum():,.0f}")
-    lines.append(f"Month To Date (MTD): ₹{mtd:,.0f}")
-    lines.append(f"Year To Date (YTD): ₹{ytd:,.0f}")
+    result = {}
+    for i, row in raw_df.iterrows():
+        cell = str(row.iloc[0]).strip().upper()
+        for key, meta in PRODUCT_ROWS.items():
+            if cell == key:
+                try:
+                    vals = pd.to_numeric(row.iloc[1:], errors="coerce").fillna(0)
+                    total = float(vals.iloc[lo - 1: hi].sum())
+                    if total > 0:
+                        result[key] = {
+                            "emoji": meta[0],
+                            "label": meta[1],
+                            "color": meta[2],
+                            "total": total,
+                        }
+                except Exception:
+                    pass
+    return result
+
+
+def get_data_summary_for_ai(df: pd.DataFrame) -> str:
+    """Creates a plain text summary for the AI model."""
+    salesperson_totals = get_salesperson_totals(df)
+    category_totals    = get_category_totals(df)
+    daily_totals       = get_daily_totals(df)
+
+    lines = ["=== ARIA SALES DATA SUMMARY ==="]
+    lines.append(f"Total Sales: ₹{daily_totals.sum():,.0f}")
+    lines.append(f"Daily Average: ₹{daily_totals.mean():,.0f}")
+    lines.append(f"Days in period: {len(daily_totals)}")
     lines.append("")
+
     lines.append("=== CATEGORY TOTALS ===")
     for _, row in category_totals.iterrows():
         lines.append(f"{row['Category']}: ₹{row['Total']:,.0f}")
     lines.append("")
-    lines.append("=== SALESPERSON / CHANNEL TOTALS ===")
-    for _, row in salesperson_totals.iterrows():
+
+    lines.append("=== TOP SALESPEOPLE ===")
+    for _, row in salesperson_totals.head(10).iterrows():
         lines.append(f"{row['Salesperson']} ({row['Category']}): ₹{row['Total']:,.0f}")
     lines.append("")
+
     lines.append("=== DAILY TOTALS ===")
-    for i, val in enumerate(daily_totals):
-        lines.append(f"Day {i + 1}: ₹{val:,.0f}")
+    for col, val in daily_totals.items():
+        lines.append(f"{col}: ₹{val:,.0f}")
 
     zero_list = get_zero_sales(df)
     if zero_list:
         lines.append("")
-        lines.append("=== ZERO-SALES DAYS DETECTED ===")
+        lines.append("=== ZERO-SALES ALERTS ===")
         lines.append(", ".join(zero_list))
 
     return "\n".join(lines)
