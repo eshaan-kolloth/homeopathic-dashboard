@@ -12,6 +12,19 @@ import requests
 import warnings
 warnings.filterwarnings("ignore")
 
+try:
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import accuracy_score
+    from sklearn.utils import resample
+    from sklearn.linear_model import LinearRegression
+    SKLEARN_AVAILABLE = True
+except ImportError as _sklearn_err:
+    SKLEARN_AVAILABLE = False
+    _sklearn_import_error = str(_sklearn_err)
+
 st.set_page_config(
     page_title="ARIA · ML Intelligence",
     page_icon="🔮",
@@ -371,16 +384,11 @@ if "uploaded_file_bytes" in st.session_state:
 @st.cache_data(show_spinner=False, ttl=600)
 def run_ml_models(cache_key: str):
     results = {}
+    if not SKLEARN_AVAILABLE:
+        results["sklearn_error"] = _sklearn_import_error
+        return results
     if tx_df.empty or "Total Amount" not in tx_df.columns:
         return results
-
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
-    from sklearn.model_selection import train_test_split
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.cluster import KMeans
-    from sklearn.metrics import accuracy_score
-    from sklearn.utils import resample
-    from sklearn.linear_model import LinearRegression
 
     df_ml = tx_df.copy()
     try:
@@ -510,6 +518,14 @@ def run_ml_models(cache_key: str):
 cache_key = f"{filename}_{len(tx_df)}_{df.shape}"
 with st.spinner("🔮 Running ML models…"):
     ml_results = run_ml_models(cache_key)
+
+if not SKLEARN_AVAILABLE:
+    st.error(
+        "⚠️ **scikit-learn is not installed.** ML models cannot run.\n\n"
+        "Add `scikit-learn` to your `requirements.txt` and redeploy the app.\n\n"
+        f"Details: `{_sklearn_import_error}`"
+    )
+    st.stop()
 
 # ══════════════════════════════════════════════════════════════════
 # CHART THEME
